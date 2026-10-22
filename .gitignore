@@ -1,0 +1,10 @@
+# Rebuilt by install.sh
+venv/
+models/
+
+# Build output and caches
+__pycache__/
+*.pyc
+mcu/**/build/
+mcu/**/.cache/
+*.part

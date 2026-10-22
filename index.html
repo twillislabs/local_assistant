@@ -1,0 +1,963 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistant</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --border: #dde2e8;
+  --accent: #2563eb; --accent-text: #ffffff; --ok: #15803d; --warn: #b45309; --bad: #b91c1c;
+  --chip: #eef1f5; --code: #f1f3f6; --you: #dbe7ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --panel: #1a1e24; --text: #e6e9ee; --muted: #9aa5b3; --border: #2c323b;
+    --accent: #5b8cff; --accent-text: #0b1020; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+    --chip: #232932; --code: #20252d; --you: #1f2f52;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--border); padding: 10px 16px; }
+.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; max-width: 960px; margin: 0 auto; }
+h1 { font-size: 17px; margin: 0 8px 0 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 13px; white-space: nowrap; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+nav { display: flex; gap: 2px; max-width: 960px; margin: 8px auto 0; overflow-x: auto; }
+nav button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 6px 12px; font: inherit; cursor: pointer; }
+nav button.on { color: var(--text); border-bottom-color: var(--accent); }
+main { max-width: 960px; margin: 0 auto; padding: 16px; }
+section.tab { display: none; } section.tab.on { display: block; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+.hint { color: var(--muted); font-size: 13px; margin: 4px 0 10px; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 8px 0 3px; }
+input[type=text], input[type=password], input[type=number], input[type=url], select, textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); font: inherit;
+}
+textarea { font: 13px/1.4 ui-monospace, Consolas, monospace; min-height: 120px; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
+.check { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 14px; margin: 6px 0; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+button.b { padding: 8px 14px; border-radius: 7px; border: 1px solid var(--border); background: var(--chip); color: var(--text); font: inherit; cursor: pointer; }
+button.b.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.b.danger { color: var(--bad); }
+button.b:disabled { opacity: .5; cursor: default; }
+.msg { font-size: 13px; } .msg.ok { color: var(--ok); } .msg.bad { color: var(--bad); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; font-size: 13px; }
+tr.click { cursor: pointer; } tr.click:hover { background: var(--chip); }
+code, pre { background: var(--code); border-radius: 5px; font: 12.5px ui-monospace, Consolas, monospace; }
+code { padding: 1px 5px; } pre { padding: 10px; white-space: pre-wrap; overflow-x: auto; margin: 0; }
+.banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; background: var(--chip); }
+.banner.bad { color: var(--bad); } .banner.ok { color: var(--ok); }
+#log { display: flex; flex-direction: column; gap: 10px; min-height: 200px; max-height: 60vh; overflow-y: auto; padding: 4px; }
+.you { align-self: flex-end; background: var(--you); padding: 8px 12px; border-radius: 12px 12px 2px 12px; max-width: 80%; }
+.bot { align-self: flex-start; background: var(--chip); padding: 8px 12px; border-radius: 12px 12px 12px 2px; max-width: 90%; font-size: 14px; }
+.bot .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.composer { display: flex; gap: 8px; margin-top: 12px; }
+.composer input { flex: 1; }
+.suggest { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.suggest .chip { cursor: pointer; border: 1px solid var(--border); }
+.bar { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.bar > div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); border-radius: 6px; background: none; padding: 0; }
+.tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 12px; }
+@media (max-width: 520px) { .you, .bot { max-width: 100%; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <h1>Assistant</h1>
+    <div class="chips">
+      <span class="chip" id="c-net"><span class="dot"></span>Network</span>
+      <span class="chip" id="c-ha"><span class="dot"></span>Home Assistant</span>
+      <span class="chip" id="c-model"><span class="dot"></span>Model</span>
+      <button class="chip" id="c-voice" title="Switch listening on/off" style="border:1px solid var(--border);cursor:pointer;font:inherit;font-size:13px;color:inherit"><span class="dot"></span>Listening</button>
+    </div>
+  </div>
+  <nav id="nav">
+    <button data-tab="chat" class="on">Chat</button>
+    <button data-tab="voice">Voice</button>
+    <button data-tab="network">Network</button>
+    <button data-tab="ha">Home Assistant</button>
+    <button data-tab="model">Model</button>
+    <button data-tab="system">System</button>
+  </nav>
+</header>
+<main>
+  <div id="job" class="banner" hidden></div>
+
+  <!-- Chat -->
+  <section class="tab on" id="t-chat">
+    <div class="card">
+      <div id="log"></div>
+      <div class="composer">
+        <input type="text" id="say" placeholder="e.g. turn on the office lamp" autocomplete="off">
+        <button class="b primary" id="send">Send</button>
+      </div>
+      <label class="check"><input type="checkbox" id="dry"> Dry run (show what it would do, don't touch devices)</label>
+      <label class="check"><input type="checkbox" id="speak"> Speak replies on the board's speaker</label>
+      <div class="suggest" id="suggest"></div>
+    </div>
+  </section>
+
+  <!-- Voice -->
+  <section class="tab" id="t-voice">
+    <div class="card">
+      <h2>Voice mode</h2>
+      <label class="check"><input type="checkbox" id="v-enabled"> Listen for the wake phrase and triggers</label>
+      <div class="hint" id="v-status">—</div>
+      <div class="btns"><button class="b primary" id="v-listen">Listen now</button><span class="msg" id="v-msg"></span></div>
+      <table id="v-events" style="margin-top:10px"></table>
+    </div>
+
+    <div class="card">
+      <h2>Microphone &amp; speaker</h2>
+      <div class="row">
+        <div><label>Microphone</label><select id="v-mic"></select></div>
+        <div><label>Speaker</label><select id="v-speaker"></select></div>
+      </div>
+      <div class="row">
+        <div><label>Speaker volume <span id="v-spk-val"></span></label><input type="range" id="v-spk" min="0" max="100"></div>
+        <div><label>Microphone gain <span id="v-mic-val"></span></label><input type="range" id="v-gain" min="0" max="100"></div>
+      </div>
+      <label>Mic level</label><div class="bar" style="height:10px"><div id="v-meter"></div></div>
+      <div class="btns">
+        <button class="b primary" id="v-dev-save">Save devices</button>
+        <button class="b" id="v-test-mic">Test mic (3 s)</button>
+        <button class="b" id="v-test-spk">Test speaker</button>
+        <span class="msg" id="v-dev-msg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Wake phrase &amp; triggers</h2>
+      <label class="check"><input type="checkbox" id="v-wake-on"> Listen for a wake phrase</label>
+      <div class="row">
+        <div><label>Wake phrase</label><input type="text" id="v-wake" placeholder="hey computer"></div>
+        <div><label>Max listening time (seconds)</label><input type="number" id="v-listen-s" min="3" max="20"></div>
+      </div>
+      <p class="hint">Use common English words; two or three syllables or more avoids false triggers ("hey computer", "okay house", "hey hal").</p>
+      <label class="check"><input type="checkbox" id="v-chime"> Chime when it starts listening</label>
+      <label>Button</label>
+      <div class="btns" style="margin-top:0"><span id="v-key" class="chip">none</span><button class="b" id="v-learn">Learn button…</button><button class="b" id="v-key-clear">Clear</button></div>
+      <label>Button to switch listening on/off</label>
+      <div class="btns" style="margin-top:0"><span id="v-tkey" class="chip">none</span><button class="b" id="v-tlearn">Learn button…</button><button class="b" id="v-tkey-clear">Clear</button></div>
+      <p class="hint">Press "Learn", then press any key on a USB keyboard, remote, media button or the mic's own button. Use different keys for the two actions.</p>
+      <label class="check"><input type="checkbox" id="v-gpio-on"> GPIO button</label>
+      <div class="row" id="v-gpio">
+        <div><label>Chip</label><input type="text" id="v-gpio-chip" placeholder="gpiochip1"></div>
+        <div><label>Line</label><input type="number" id="v-gpio-line" min="0"></div>
+        <div><label>Trigger on</label><select id="v-gpio-edge"><option value="falling">press to ground (falling)</option><option value="rising">rising</option></select></div>
+      </div>
+      <div class="btns"><button class="b primary" id="v-trig-save">Save</button><span class="msg" id="v-trig-msg"></span></div>
+      <label>From a script, Home Assistant, or another device</label>
+      <pre id="v-snippets"></pre>
+    </div>
+
+    <div class="card">
+      <h2>Speech recognition</h2>
+      <label>Mode</label>
+      <select id="v-rec">
+        <option value="fast">Fast: commands use your device words; conversation uses full English in parallel</option>
+        <option value="open">Open: full English for everything (about 10× slower for commands)</option>
+      </select>
+      <label>Extra words to recognise (e.g. how you say device names: "sun lamp", "robo rock")</label><input type="text" id="v-words">
+      <div class="btns"><button class="b primary" id="v-rec-save">Save</button><span class="msg" id="v-rec-msg"></span></div>
+    </div>
+
+    <div class="card">
+      <h2>Personality</h2>
+      <p class="hint">A personality is its voice, how it talks, what it says after commands, and its light colours. Edit the built-ins or make your own.</p>
+      <div class="row">
+        <div><label>Personality</label><select id="p-pick"></select></div>
+        <div><label>What it calls you</label><input type="text" id="v-name" placeholder="Dave"></div>
+      </div>
+      <div class="btns">
+        <button class="b primary" id="p-use">Use this personality</button>
+        <button class="b" id="p-new">New</button>
+        <button class="b" id="p-dup">Duplicate</button>
+        <button class="b" id="p-capture">Save current settings as new</button>
+        <button class="b danger" id="p-del">Delete</button>
+        <button class="b" id="p-restore">Restore built-ins</button>
+        <span class="msg" id="p-msg"></span>
+      </div>
+      <h2 style="margin-top:18px" id="p-title">Edit</h2>
+      <div id="p-editor-fields">
+      <div class="row">
+        <div><label>Name</label><input type="text" id="p-label"></div>
+        <div><label>Voice</label><select id="p-voice"></select></div>
+        <div><label>Speed <span id="p-speed-val"></span></label><input type="range" id="p-speed" min="0.6" max="1.6" step="0.05"></div>
+        <div><label>Voice loudness <span id="p-vol-val"></span></label><input type="range" id="p-vol" min="0.2" max="2" step="0.1"></div>
+        <div><label>Wake phrase (optional)</label><input type="text" id="p-wake" placeholder="keep the current one"></div>
+        <div><label>Creativity <span id="p-temp-val"></span></label><input type="range" id="p-temp" min="0" max="1.5" step="0.1"></div>
+      </div>
+      <label>Who it is: the conversation prompt ({name} = what it calls you)</label><textarea id="p-prompt" style="min-height:90px"></textarea>
+      <label>Reply after a command ({did} = what it did, {name})</label><input type="text" id="p-ok">
+      <label>Reply when it can't ({reason}, {name})</label><input type="text" id="p-fail">
+      <label>Reply when it hears nothing (blank = just a low chime)</label><input type="text" id="p-unheard">
+      <label>Easter eggs: one per line, <code>phrase | other phrase =&gt; reply | another reply</code></label>
+      <textarea id="p-eggs" style="min-height:110px" placeholder="open the pod bay doors => I'm sorry, {name}. I'm afraid I can't do that."></textarea>
+      <p class="hint">Checked before anything else, so they never switch devices. If there are several replies, one is picked at random. Use phrases of two or more words so they don't catch normal commands.</p>
+      <label>Light colours</label>
+      <table id="p-states"></table>
+      </div>
+      <div class="btns">
+        <button class="b primary" id="p-save">Save</button>
+        <button class="b" id="p-save-use">Save &amp; use</button>
+        <span class="msg" id="p-edit-msg"></span>
+      </div>
+      <label>Try this voice</label>
+      <div class="composer" style="margin-top:0"><input type="text" id="v-say" value="Good afternoon. Everything is running smoothly."><button class="b" id="v-say-go">Say</button></div>
+      <p class="hint">Trying a voice that isn't in use takes about 15 seconds the first time while it loads.</p>
+    </div>
+
+    <div class="card">
+      <h2>Voices</h2>
+      <table id="v-voices"></table>
+      <label>Download a Piper voice</label>
+      <div class="row">
+        <div><select id="v-cat-lang"><option>Loading…</option></select></div>
+        <div><select id="v-cat"></select></div>
+      </div>
+      <div class="btns"><button class="b" id="v-cat-go">Download</button></div>
+      <label>Or a custom voice from a URL to its .onnx file (its .onnx.json must be next to it)</label>
+      <div class="composer" style="margin-top:0"><input type="url" id="v-url" placeholder="https://huggingface.co/OccultAI/HAL-9000-Piper-TTS/resolve/main/hal.onnx"><button class="b" id="v-url-go">Download</button></div>
+      <div class="msg" id="v-dl-msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Indicator light</h2>
+      <p class="hint">An LED or light that shows when it's listening. HAL's eye: dim red at rest, bright when attending.</p>
+      <label>Light</label>
+      <select id="i-type">
+        <option value="none">None</option>
+        <option value="board">Board RGB LED (on/off per colour)</option>
+        <option value="mcu">LED on a header pin, dimmable (D2–D13)</option>
+        <option value="gpio">LED on a Linux GPIO line (on/off)</option>
+        <option value="ha">Home Assistant light (colour + brightness, e.g. a WLED ring)</option>
+      </select>
+      <div id="i-mcu">
+        <label>Pin</label>
+        <select id="i-mcu-pin"></select>
+        <p class="hint">Wiring: pin → 220 Ω resistor → LED long leg; LED short leg → GND. The colour of each state is ignored (single LED); brightness 0 means off.</p>
+      </div>
+      <div class="row" id="i-gpio">
+        <div><label>Chip</label><input type="text" id="i-gpio-chip" placeholder="gpiochip1"></div>
+        <div><label>Line</label><input type="number" id="i-gpio-line" min="0"></div>
+        <div><label class="check" style="margin-top:28px"><input type="checkbox" id="i-gpio-low"> Active low</label></div>
+      </div>
+      <div id="i-ha"><label>Light entity ID</label><input type="text" id="i-entity" placeholder="light.wled_ring"></div>
+      <p class="hint">Colours are part of each personality (above). Test how they look:</p>
+      <div class="btns" id="i-states" style="margin-top:0">
+        <button class="b" data-test="idle">Idle</button><button class="b" data-test="listening">Listening</button>
+        <button class="b" data-test="thinking">Thinking</button><button class="b" data-test="speaking">Speaking</button>
+      </div>
+      <div class="btns"><button class="b primary" id="i-save">Save</button><span class="msg" id="i-msg"></span></div>
+    </div>
+  </section>
+
+  <!-- Network -->
+  <section class="tab" id="t-network">
+    <div class="card">
+      <h2>Current connection</h2>
+      <div id="net-now" class="hint">Loading…</div>
+      <div id="ip-form" hidden>
+        <label>IP address</label>
+        <select id="ip-method"><option value="auto">Automatic (DHCP)</option><option value="manual">Static</option></select>
+        <div class="row" id="ip-static">
+          <div><label>Address / prefix</label><input type="text" id="ip-addr" placeholder="192.168.10.50/24"></div>
+          <div><label>Gateway</label><input type="text" id="ip-gw" placeholder="192.168.10.1"></div>
+        </div>
+        <label>DNS servers (optional, comma separated)</label><input type="text" id="ip-dns" placeholder="1.1.1.1, 8.8.8.8">
+        <p class="hint">If the board can't reach your router with the new settings, it puts the old ones back after about 30 seconds. With a static address, open the UI at the new address afterwards.</p>
+        <div class="btns"><button class="b primary" id="ip-apply">Apply IP settings</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Join a Wi-Fi network</h2>
+      <div class="btns" style="margin-top:0"><button class="b" id="scan">Scan</button><span class="msg" id="scan-msg"></span></div>
+      <table id="nets" style="margin-top:8px"></table>
+      <div class="row">
+        <div><label>Network name (SSID)</label><input type="text" id="w-ssid"></div>
+        <div><label>Password</label><input type="password" id="w-pass" placeholder="leave blank for open networks"></div>
+      </div>
+      <label class="check"><input type="checkbox" id="w-hidden"> Hidden network</label>
+      <p class="hint">If you're connected through the setup hotspot, it switches off while the board tries this network. If it works, reconnect your device to your normal Wi-Fi and open <code id="mdns-url">http://unoq1.local</code>. If it fails, the hotspot comes back in about a minute.</p>
+      <div class="btns"><button class="b primary" id="w-connect">Connect</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Saved networks</h2>
+      <table id="saved"></table>
+    </div>
+
+    <div class="card">
+      <h2>Setup hotspot</h2>
+      <p class="hint">When the board has no Wi-Fi connection, it starts this hotspot so you can connect and set it up at <code>http://10.42.0.1</code>. It turns off once the board joins a network.</p>
+      <label class="check"><input type="checkbox" id="h-enabled"> Start the hotspot automatically when offline</label>
+      <div class="row">
+        <div><label>Hotspot name</label><input type="text" id="h-ssid"></div>
+        <div><label>Hotspot password (8+ characters)</label><input type="password" id="h-pass" placeholder="•••••• (unchanged)"></div>
+        <div><label>Wait before starting (seconds offline)</label><input type="number" id="h-grace" min="10"></div>
+        <div><label>Retry saved networks every (minutes)</label><input type="number" id="h-retry" min="1"></div>
+      </div>
+      <div class="btns">
+        <button class="b primary" id="h-save">Save</button>
+        <button class="b" id="h-on">Start hotspot now</button>
+        <button class="b" id="h-off">Stop hotspot &amp; reconnect</button>
+        <span class="msg" id="h-msg"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Home Assistant -->
+  <section class="tab" id="t-ha">
+    <div class="card">
+      <h2>Connection</h2>
+      <label>Home Assistant URL</label><input type="url" id="ha-url">
+      <label>Long-lived access token</label><input type="password" id="ha-token" placeholder="•••••• (unchanged)">
+      <p class="hint">Create one in Home Assistant under your profile → Security → Long-lived access tokens. The MCP Server integration must be installed.</p>
+      <div class="btns">
+        <button class="b" id="ha-test">Test</button>
+        <button class="b primary" id="ha-save">Save &amp; reload</button>
+        <span class="msg" id="ha-msg"></span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Tools the model may use</h2>
+      <p class="hint">Fewer tools means a shorter prompt and better accuracy from a small model.</p>
+      <div class="tools" id="ha-tools"></div>
+      <label>Device types to include (comma separated)</label><input type="text" id="ha-domains">
+      <label>When you name only a room ("turn off the office"), switch these types</label><input type="text" id="ha-area-domains">
+      <div class="btns"><button class="b primary" id="ha-save2">Save &amp; reload</button><button class="b" id="ha-reload">Re-read devices from HA</button><span class="msg" id="ha-msg2"></span></div>
+    </div>
+    <div class="card">
+      <h2>Devices the model knows about</h2>
+      <table id="ha-devices"></table>
+    </div>
+  </section>
+
+  <!-- Model -->
+  <section class="tab" id="t-model">
+    <div class="card">
+      <h2>Ollama settings</h2>
+      <div class="row">
+        <div><label>Model</label><select id="o-model"></select></div>
+        <div><label>Ollama URL</label><input type="url" id="o-url"></div>
+        <div><label>Temperature</label><input type="number" id="o-temp" step="0.1" min="0" max="2"></div>
+        <div><label>Context size (tokens)</label><input type="number" id="o-ctx" step="512" min="1024"></div>
+        <div><label>Keep model loaded</label><input type="text" id="o-keep" placeholder="-1 = forever, or e.g. 30m"></div>
+      </div>
+      <label>Extra instructions for the model (optional)</label><textarea id="o-extra" style="min-height:60px"></textarea>
+      <label>Worked examples (JSON: [phrase, tool, arguments])</label><textarea id="o-examples"></textarea>
+      <p class="hint">Examples teach the small model how to call tools. Use your real device names. They're cached after warm-up, so they don't slow down requests.</p>
+      <div class="btns"><button class="b primary" id="o-save">Save &amp; reload</button><span class="msg" id="o-msg"></span></div>
+    </div>
+    <div class="card">
+      <h2>Conversation</h2>
+      <p class="hint">Anything that isn't a home command gets a short spoken reply. It runs on a second Ollama instance so chatting never slows down commands.</p>
+      <label class="check"><input type="checkbox" id="c-enabled"> Allow conversation</label>
+      <div class="row">
+        <div><label>Conversation model</label><select id="ch-model"></select></div>
+        <div><label>Max reply length (tokens)</label><input type="number" id="c-max" min="20" max="400"></div>
+        <div><label>Remember last N exchanges</label><input type="number" id="c-hist" min="0" max="10"></div>
+      </div>
+      <p class="hint">Who it is and how creative it is are set per personality on the Voice tab.</p>
+      <div class="btns"><button class="b primary" id="c-save">Save</button><span class="msg" id="c-msg"></span></div>
+    </div>
+    <div class="card">
+      <h2>Installed models</h2>
+      <table id="o-models"></table>
+      <h2 style="margin-top:14px">Conversation instance models</h2>
+      <table id="c-models"></table>
+      <label>Download a model</label>
+      <div class="composer" style="margin-top:0">
+        <input type="text" id="o-pull" placeholder="e.g. qwen2.5:1.5b">
+        <select id="o-pull-target" style="width:auto"><option value="command">for commands</option><option value="chat">for conversation</option></select>
+        <button class="b" id="o-pull-go">Download</button>
+      </div>
+      <div class="suggest">
+        <span class="chip" data-pull="qwen2.5:0.5b">qwen2.5:0.5b · 400 MB · fastest</span>
+        <span class="chip" data-pull="qwen2.5:1.5b">qwen2.5:1.5b · 1 GB · more accurate, ~3× slower</span>
+        <span class="chip" data-pull="llama3.2:1b">llama3.2:1b · 1.3 GB</span>
+      </div>
+      <div id="pull-box" hidden><div class="msg" id="pull-msg"></div><div class="bar"><div id="pull-bar"></div></div></div>
+    </div>
+  </section>
+
+  <!-- System -->
+  <section class="tab" id="t-system">
+    <div class="card">
+      <h2>Board</h2>
+      <table id="sys"></table>
+    </div>
+    <div class="card">
+      <h2>Web UI</h2>
+      <label>UI password (leave blank to keep current)</label><input type="password" id="u-pass" placeholder="no password set">
+      <label class="check"><input type="checkbox" id="u-clear"> Remove the password</label>
+      <label>Port (0 = 80 if allowed, otherwise 8080; restart required)</label><input type="number" id="u-port" min="0" max="65535">
+      <p class="hint">Without a password, anyone on your network can control your devices and change settings here.</p>
+      <div class="btns"><button class="b primary" id="u-save">Save</button><span class="msg" id="u-msg"></span></div>
+    </div>
+    <div class="card">
+      <h2>Power</h2>
+      <div class="btns" style="margin-top:0">
+        <button class="b" id="restart">Restart agent service</button>
+        <button class="b danger" id="reboot">Reboot board</button>
+        <span class="msg" id="p-msg"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const fmtBytes = (n) => n > 1e9 ? (n / 1e9).toFixed(1) + " GB" : (n / 1e6).toFixed(0) + " MB";
+let CFG = null, STATUS = null;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || r.statusText);
+  return d;
+}
+function say(el, text, ok) { el.textContent = text; el.className = "msg " + (ok ? "ok" : "bad"); }
+async function act(btn, msgEl, fn, okText) {
+  btn.disabled = true;
+  try { const r = await fn(); if (msgEl) say(msgEl, okText || "Saved", true); return r; }
+  catch (e) { if (msgEl) say(msgEl, e.message, false); else alert(e.message); }
+  finally { btn.disabled = false; }
+}
+function chip(id, cls, text) { $(id).innerHTML = `<span class="dot ${cls}"></span>${esc(text)}`; }
+
+// ---- tabs ----
+$("#nav").onclick = (e) => {
+  const t = e.target.dataset.tab; if (!t) return;
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+  document.querySelectorAll("section.tab").forEach((s) => s.classList.toggle("on", s.id === "t-" + t));
+  try { localStorage.setItem("tab", t); } catch {}
+  if (t === "network") { loadSaved(); }
+  if (t === "ha") { loadAgent(); }
+  if (t === "voice") { loadVoice(); }
+};
+try { const t = localStorage.getItem("tab"); if (t) document.querySelector(`nav button[data-tab="${t}"]`)?.click(); } catch {}
+
+// ---- status polling ----
+async function poll() {
+  try {
+    const s = STATUS = await api("/api/status");
+    const n = s.net;
+    if (n.hotspot) chip("#c-net", "warn", "Hotspot on");
+    else if (n.connected) chip("#c-net", "ok", `${n.connection} · ${n.address.split("/")[0]}`);
+    else chip("#c-net", "bad", "Offline");
+    chip("#c-ha", s.agent.ready ? "ok" : "bad", s.agent.ready ? `HA · ${s.agent.devices} devices` : "HA not connected");
+    const loaded = s.ollama.loaded.includes(CFG?.ollama.model);
+    chip("#c-model", !s.ollama.up ? "bad" : s.agent.warm.startsWith("warm (") && loaded ? "ok" : "warn",
+      !s.ollama.up ? "Ollama down" : `${CFG?.ollama.model || ""} · ${loaded ? s.agent.warm : "not loaded"}`);
+    renderNet(n); renderSys(s); renderModels(s); renderPull(s.pull); renderVoiceStatus(s.voice);
+    const j = n.job, jb = $("#job");
+    const recent = j.state === "running" || (j.at && Date.now() / 1000 - j.at < 120);
+    jb.hidden = !recent || j.state === "idle";
+    jb.className = "banner " + (j.state === "ok" ? "ok" : j.state === "error" ? "bad" : "");
+    jb.textContent = (j.state === "running" ? "⏳ " : "") + j.message;
+  } catch (e) {
+    chip("#c-net", "bad", "Board unreachable");
+  }
+}
+
+// ---- chat ----
+function addMsg(cls, html) { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; $("#log").appendChild(d); $("#log").scrollTop = 1e9; return d; }
+async function send(text) {
+  text = text.trim(); if (!text) return;
+  $("#say").value = "";
+  addMsg("you", esc(text));
+  const pending = addMsg("bot", "<span class='meta'>thinking…</span>");
+  $("#send").disabled = true;
+  try {
+    const r = await api("/ask", {text, dry_run: $("#dry").checked, speak: $("#speak").checked});
+    if (r.error) { pending.innerHTML = `<span class="msg bad">${esc(r.error)}</span>`; return; }
+    if (r.mode === "chat" || r.mode === "easter") {
+      pending.innerHTML = `${esc(r.reply)}<div class="meta">${r.mode === "easter" ? "easter egg 🥚" : `conversation · ${r.seconds}s`}</div>`; return;
+    }
+    if (!r.calls) { pending.innerHTML = `${esc(r.reply)}<div class="meta">no device action · ${r.seconds}s</div>`; return; }
+    pending.innerHTML = r.calls.map((c) => {
+      let res = c.result || "";
+      try { const d = JSON.parse(res); if (d.data) res = d.data.success?.length ? "✓ " + d.data.success.map((x) => x.name).join(", ") : "✗ nothing matched"; } catch {}
+      return `<div>${c.error ? "⚠️" : "✅"} <code>${esc(c.tool)}</code> <code>${esc(JSON.stringify(c.args))}</code></div>
+              <div class="meta">${esc(c.error && c.error !== true ? c.error : res)}</div>`;
+    }).join("") + `<div class="meta">${r.seconds}s${$("#dry").checked ? " · dry run" : ""}</div>`;
+  } catch (e) { pending.innerHTML = `<span class="msg bad">${esc(e.message)}</span>`; }
+  finally { $("#send").disabled = false; $("#say").focus(); }
+}
+$("#send").onclick = () => send($("#say").value);
+$("#say").onkeydown = (e) => { if (e.key === "Enter") send($("#say").value); };
+$("#suggest").onclick = (e) => { if (e.target.dataset.say) { $("#say").value = e.target.dataset.say; $("#say").focus(); } };
+
+// ---- network ----
+function renderNet(n) {
+  const box = $("#net-now");
+  if (n.hotspot) box.innerHTML = `Hotspot <b>${esc(CFG?.hotspot.ssid)}</b> is on at <code>10.42.0.1</code>. Join a network below.`;
+  else if (n.connected) box.innerHTML = `<b>${esc(n.connection)}</b> · ${esc(n.address)} · gateway ${esc(n.gateway)} · DNS ${esc(n.dns || "—")} · ${n.ipv4?.method === "manual" ? "static" : "DHCP"}`;
+  else box.textContent = "Not connected.";
+  const f = $("#ip-form");
+  if (n.connected && n.ipv4 && f.dataset.for !== n.connection) {
+    f.dataset.for = n.connection; f.hidden = false;
+    $("#ip-method").value = n.ipv4.method === "manual" ? "manual" : "auto";
+    $("#ip-addr").value = n.ipv4.address || n.address; $("#ip-gw").value = n.ipv4.gateway || n.gateway; $("#ip-dns").value = n.ipv4.dns;
+    $("#ip-static").hidden = $("#ip-method").value !== "manual";
+  } else if (!n.connected) { f.hidden = true; f.dataset.for = ""; }
+}
+$("#ip-method").onchange = () => { $("#ip-static").hidden = $("#ip-method").value !== "manual"; };
+$("#ip-apply").onclick = () => {
+  const ipv4 = {method: $("#ip-method").value, address: $("#ip-addr").value, gateway: $("#ip-gw").value, dns: $("#ip-dns").value};
+  const where = ipv4.method === "manual" ? `\n\nAfterwards, open http://${ipv4.address.split("/")[0]}${location.port ? ":" + location.port : ""}` : "";
+  if (!confirm(`Apply these IP settings to ${STATUS.net.connection}? The connection will drop briefly.${where}`)) return;
+  act($("#ip-apply"), null, () => api("/api/wifi/ipv4", {name: STATUS.net.connection, ipv4}));
+};
+async function scan() {
+  $("#scan-msg").textContent = "Scanning…"; $("#scan-msg").className = "msg";
+  try {
+    const nets = await api("/api/wifi/scan");
+    $("#nets").innerHTML = "<tr><th>Network</th><th>Signal</th><th>Security</th></tr>" + nets.map((w) =>
+      `<tr class="click" data-ssid="${esc(w.ssid)}"><td>${w.in_use ? "● " : ""}${esc(w.ssid)}</td><td>${w.signal}%</td><td>${esc(w.security || "open")}</td></tr>`).join("");
+    $("#scan-msg").textContent = nets.length ? "Tap a network to fill in its name." : "No networks found (scanning may not work while the hotspot is on; type the name instead).";
+  } catch (e) { say($("#scan-msg"), e.message, false); }
+}
+$("#scan").onclick = scan;
+$("#nets").onclick = (e) => { const tr = e.target.closest("tr[data-ssid]"); if (tr) { $("#w-ssid").value = tr.dataset.ssid; $("#w-pass").focus(); } };
+$("#w-connect").onclick = () => {
+  const ssid = $("#w-ssid").value.trim(); if (!ssid) return;
+  act($("#w-connect"), null, async () => { await api("/api/wifi/connect", {ssid, password: $("#w-pass").value, hidden: $("#w-hidden").checked}); $("#w-pass").value = ""; });
+};
+async function loadSaved() {
+  try {
+    const s = await api("/api/wifi/saved");
+    $("#saved").innerHTML = s.length ? "<tr><th>Network</th><th>IP</th><th></th></tr>" + s.map((n) =>
+      `<tr><td>${esc(n.ssid)}</td><td>${n.ipv4.method === "manual" ? "static " + esc(n.ipv4.address) : "DHCP"}</td>
+       <td style="text-align:right"><button class="b danger" data-forget="${esc(n.name)}">Forget</button></td></tr>`).join("") : "<tr><td class='hint'>None saved.</td></tr>";
+  } catch (e) { $("#saved").innerHTML = `<tr><td class="msg bad">${esc(e.message)}</td></tr>`; }
+}
+$("#saved").onclick = async (e) => {
+  const name = e.target.dataset.forget; if (!name) return;
+  const active = STATUS?.net.connection === name;
+  if (!confirm(`Forget ${name}?` + (active ? "\n\nThe board is connected through this network right now and will go offline. It will start the setup hotspot if that's enabled." : ""))) return;
+  await act(e.target, null, () => api("/api/wifi/forget", {name})); loadSaved();
+};
+$("#h-save").onclick = () => act($("#h-save"), $("#h-msg"), async () => {
+  CFG = await api("/api/config/hotspot", {enabled: $("#h-enabled").checked, ssid: $("#h-ssid").value, password: $("#h-pass").value,
+    grace_seconds: +$("#h-grace").value, retry_minutes: +$("#h-retry").value});
+  $("#h-pass").value = "";
+});
+$("#h-on").onclick = () => { if (confirm("Start the hotspot now? The board will leave its current Wi-Fi network.")) act($("#h-on"), $("#h-msg"), () => api("/api/hotspot", {on: true}), "Starting…"); };
+$("#h-off").onclick = () => act($("#h-off"), $("#h-msg"), () => api("/api/hotspot", {on: false}), "Reconnecting…");
+
+// ---- Home Assistant ----
+async function loadAgent() {
+  try {
+    const a = await api("/api/agent");
+    const sel = new Set(CFG.ha.tools);
+    $("#ha-tools").innerHTML = a.all_tools.length ? a.all_tools.filter((t) => t.name !== "GetLiveContext").map((t) =>
+      `<label class="check" title="${esc(t.description)}"><input type="checkbox" value="${esc(t.name)}" ${sel.has(t.name) ? "checked" : ""}> ${esc(t.name)}</label>`).join("")
+      : `<p class="hint">${esc(a.error || "Connect to Home Assistant to see its tools.")}</p>`;
+    $("#ha-devices").innerHTML = a.devices.length ? "<tr><th>Name</th><th>Type</th><th>Area</th></tr>" + a.devices.map(([n, d, ar]) =>
+      `<tr><td>${esc(n)}</td><td>${esc(d)}</td><td>${esc(ar.join(", "))}</td></tr>`).join("") : `<tr><td class="hint">No devices loaded.</td></tr>`;
+    $("#suggest").innerHTML = a.devices.slice(0, 6).map(([n, d]) => {
+      const p = d === "cover" ? `raise the ${n}` : d === "media_player" ? `pause the ${n}` : `turn on the ${n}`;
+      return `<span class="chip" data-say="${esc(p)}">${esc(p)}</span>`;
+    }).join("");
+  } catch {}
+}
+$("#ha-test").onclick = () => act($("#ha-test"), $("#ha-msg"), async () => {
+  const r = await api("/api/ha/test", {url: $("#ha-url").value, token: $("#ha-token").value}); say($("#ha-msg"), r.message, true);
+}, "Connected");
+async function saveHa(btn, msg, extra) {
+  await act(btn, msg, async () => {
+    CFG = await api("/api/config/ha", {url: $("#ha-url").value, token: $("#ha-token").value, ...extra});
+    $("#ha-token").value = "";
+  }, "Saved; reloading devices and warming the model (about a minute)…");
+  setTimeout(loadAgent, 5000);
+}
+$("#ha-save").onclick = () => saveHa($("#ha-save"), $("#ha-msg"), {});
+$("#ha-save2").onclick = () => saveHa($("#ha-save2"), $("#ha-msg2"), {
+  tools: [...document.querySelectorAll("#ha-tools input:checked")].map((i) => i.value),
+  domains: $("#ha-domains").value.split(",").map((s) => s.trim()).filter(Boolean),
+  area_domains: $("#ha-area-domains").value.split(",").map((s) => s.trim()).filter(Boolean),
+});
+$("#ha-reload").onclick = () => act($("#ha-reload"), $("#ha-msg2"), async () => {
+  const r = await api("/api/agent/reload", {}); if (!r.ok) throw new Error(r.error); loadAgent();
+}, "Reloaded; warming the model…");
+
+// ---- model ----
+function renderChatModels(s) {
+  const names = s.chat_ollama.models.map((m) => m.name).join("|");
+  if ($("#c-models").dataset.names === names) return;
+  $("#c-models").dataset.names = names;
+  $("#c-models").innerHTML = !s.chat_ollama.up ? `<tr><td class="msg bad">Conversation instance not running</td></tr>` :
+    "<tr><th>Model</th><th>Size</th><th></th></tr>" + s.chat_ollama.models.map((m) =>
+    `<tr><td>${esc(m.name)}${m.name === CFG?.chat.model ? " <span class='chip'>in use</span>" : ""}</td><td>${fmtBytes(m.size)}</td>
+     <td style="text-align:right">${m.name === CFG?.chat.model ? "" : `<button class="b danger" data-del="${esc(m.name)}" data-target="chat">Delete</button>`}</td></tr>`).join("");
+  const sel = $("#ch-model"), cur = sel.value || CFG?.chat.model;
+  sel.innerHTML = s.chat_ollama.models.map((m) => `<option>${esc(m.name)}</option>`).join("");
+  sel.value = cur;
+}
+$("#c-models").onclick = async (e) => {
+  const name = e.target.dataset.del; if (!name || !confirm(`Delete ${name}?`)) return;
+  await act(e.target, $("#c-msg"), () => api("/api/ollama/delete", {name, target: "chat"}), "Deleted"); $("#c-models").dataset.names = ""; poll();
+};
+$("#c-save").onclick = () => act($("#c-save"), $("#c-msg"), async () => {
+  CFG = await api("/api/config/chat", {enabled: $("#c-enabled").checked, model: $("#ch-model").value,
+    max_tokens: +$("#c-max").value, history_turns: +$("#c-hist").value});
+  $("#c-models").dataset.names = "";
+}, "Saved; loading the conversation model…");
+
+function renderModels(s) {
+  renderChatModels(s);
+  const names = s.ollama.models.map((m) => m.name).join("|");
+  if ($("#o-models").dataset.names === names) return;
+  $("#o-models").dataset.names = names;
+  $("#o-models").innerHTML = "<tr><th>Model</th><th>Size</th><th></th></tr>" + s.ollama.models.map((m) =>
+    `<tr><td>${esc(m.name)}${m.name === CFG?.ollama.model ? " <span class='chip'>in use</span>" : ""}</td><td>${fmtBytes(m.size)}</td>
+     <td style="text-align:right">${m.name === CFG?.ollama.model ? "" : `<button class="b danger" data-del="${esc(m.name)}">Delete</button>`}</td></tr>`).join("");
+  const sel = $("#o-model"), cur = sel.value || CFG?.ollama.model;
+  sel.innerHTML = s.ollama.models.map((m) => `<option>${esc(m.name)}</option>`).join("");
+  sel.value = cur;
+}
+$("#o-models").onclick = async (e) => {
+  const name = e.target.dataset.del; if (!name || !confirm(`Delete ${name}?`)) return;
+  await act(e.target, $("#o-msg"), () => api("/api/ollama/delete", {name}), "Deleted"); $("#o-models").dataset.names = ""; poll();
+};
+function renderPull(p) {
+  const show = p.name && p.status && !(p.status === "done" && $("#pull-box").dataset.seen === p.name);
+  $("#pull-box").hidden = !show;
+  if (!show) return;
+  $("#pull-msg").textContent = `${p.name}: ${p.status}`;
+  $("#pull-bar").style.width = p.total ? (100 * p.completed / p.total).toFixed(0) + "%" : (p.status === "done" ? "100%" : "0");
+  if (p.status === "done") setTimeout(() => { $("#pull-box").dataset.seen = p.name; }, 10000);
+}
+function pull(name) { if (name) act($("#o-pull-go"), $("#o-msg"), () => api("/api/ollama/pull", {name, target: $("#o-pull-target").value}), `Downloading ${name}…`); }
+$("#o-pull-go").onclick = () => pull($("#o-pull").value.trim());
+document.querySelectorAll("[data-pull]").forEach((c) => c.onclick = () => { $("#o-pull").value = c.dataset.pull; });
+$("#o-save").onclick = () => act($("#o-save"), $("#o-msg"), async () => {
+  let examples;
+  try { examples = JSON.parse($("#o-examples").value); } catch { throw new Error("Examples aren't valid JSON"); }
+  CFG = await api("/api/config/ollama", {model: $("#o-model").value, url: $("#o-url").value, temperature: +$("#o-temp").value,
+    num_ctx: +$("#o-ctx").value, keep_alive: $("#o-keep").value, extra_prompt: $("#o-extra").value, examples});
+  $("#o-models").dataset.names = "";
+}, "Saved; reloading and warming the model (about a minute)…");
+
+// ---- system ----
+function renderSys(s) {
+  const y = s.system, up = y.uptime_s;
+  $("#sys").innerHTML = [
+    ["Hostname", y.hostname + ".local"],
+    ["Uptime", `${Math.floor(up / 86400)}d ${Math.floor(up % 86400 / 3600)}h ${Math.floor(up % 3600 / 60)}m`],
+    ["Memory available", `${fmtBytes(y.mem_available)} of ${fmtBytes(y.mem_total)}`],
+    ["Disk free", `${fmtBytes(y.disk_free)} of ${fmtBytes(y.disk_total)}`],
+    ["Load", y.load.toFixed(2)],
+    ["Ollama", s.ollama.up ? `running · loaded: ${s.ollama.loaded.join(", ") || "nothing"}` : "not reachable"],
+  ].map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join("");
+  $("#mdns-url").textContent = `http://${y.hostname}.local${location.port ? ":" + location.port : ""}`;
+}
+$("#u-save").onclick = () => act($("#u-save"), $("#u-msg"), async () => {
+  CFG = await api("/api/config/ui", {password: $("#u-pass").value, clear_password: $("#u-clear").checked, port: +$("#u-port").value});
+  $("#u-pass").value = ""; $("#u-clear").checked = false; fill();
+});
+$("#restart").onclick = () => act($("#restart"), $("#p-msg"), () => api("/api/system/restart", {}), "Restarting; the model takes about a minute to warm up again.");
+$("#reboot").onclick = () => { if (confirm("Reboot the board?")) act($("#reboot"), $("#p-msg"), () => api("/api/system/reboot", {}), "Rebooting…"); };
+
+// ---- init ----
+function fill() {
+  const c = CFG;
+  $("#h-enabled").checked = c.hotspot.enabled; $("#h-ssid").value = c.hotspot.ssid;
+  $("#h-grace").value = c.hotspot.grace_seconds; $("#h-retry").value = c.hotspot.retry_minutes;
+  $("#ha-url").value = c.ha.url; $("#ha-token").placeholder = c.ha.token_set ? "•••••• (saved; leave blank to keep)" : "not set";
+  $("#ha-domains").value = c.ha.domains.join(", "); $("#ha-area-domains").value = c.ha.area_domains.join(", ");
+  $("#o-url").value = c.ollama.url; $("#o-temp").value = c.ollama.temperature; $("#o-ctx").value = c.ollama.num_ctx;
+  $("#o-keep").value = c.ollama.keep_alive; $("#o-extra").value = c.ollama.extra_prompt;
+  $("#o-examples").value = "[\n" + c.ollama.examples.map((e) => "  " + JSON.stringify(e)).join(",\n") + "\n]";
+  $("#o-model").innerHTML = `<option>${esc(c.ollama.model)}</option>`; $("#o-model").value = c.ollama.model;
+  $("#u-pass").placeholder = c.ui.password_set ? "•••••• (set; leave blank to keep)" : "no password set"; $("#u-port").value = c.ui.port;
+  $("#c-enabled").checked = c.chat.enabled; $("#c-max").value = c.chat.max_tokens; $("#c-hist").value = c.chat.history_turns;
+  if (!$("#ch-model").options.length) $("#ch-model").innerHTML = `<option>${esc(c.chat.model)}</option>`;
+  fillVoice();
+}
+
+// ---- voice ----
+const V = () => CFG.voice;
+function rangeLabel(id, out, fmt) { const f = () => { $(out).textContent = fmt($(id).value); }; $(id).addEventListener("input", f); return f; }
+const showSpk = rangeLabel("#v-spk", "#v-spk-val", (v) => v + "%"), showGain = rangeLabel("#v-gain", "#v-mic-val", (v) => v + "%");
+const showSpeed = rangeLabel("#p-speed", "#p-speed-val", (v) => (+v).toFixed(2) + "×"), showVol = rangeLabel("#p-vol", "#p-vol-val", (v) => (+v).toFixed(1) + "×");
+const showTemp = rangeLabel("#p-temp", "#p-temp-val", (v) => (+v).toFixed(1));
+
+function fillVoice() {
+  const v = V(), ind = CFG.indicator;
+  $("#v-enabled").checked = v.enabled; $("#v-wake-on").checked = v.wake_enabled; $("#v-wake").value = v.wake_phrase;
+  $("#v-listen-s").value = v.listen_seconds; $("#v-chime").checked = v.chime;
+  $("#v-key").textContent = v.key ? v.key.label : "none";
+  $("#v-tkey").textContent = v.toggle_key ? v.toggle_key.label : "none";
+  $("#v-gpio-on").checked = !!v.gpio; $("#v-gpio-chip").value = v.gpio?.chip || "gpiochip1"; $("#v-gpio-line").value = v.gpio?.line ?? "";
+  $("#v-gpio-edge").value = v.gpio?.edge || "falling"; $("#v-gpio").hidden = !v.gpio;
+  $("#v-rec").value = v.recognition; $("#v-words").value = v.extra_words;
+  $("#v-name").value = v.name;
+  $("#i-type").value = ind.type; $("#i-gpio-chip").value = ind.gpio.chip; $("#i-gpio-line").value = ind.gpio.line;
+  $("#i-gpio-low").checked = ind.gpio.active_low; $("#i-entity").value = ind.entity; $("#i-mcu-pin").value = ind.mcu?.pin ?? 9;
+  showIndicatorFields();
+  fillPersonas();
+  const base = `http://${location.host}`;
+  $("#v-snippets").textContent =
+`# Start listening (from anywhere on your network)
+curl -X POST ${base}/api/voice/listen
+
+# Switch listening on/off (omit the body to toggle)
+curl -X POST ${base}/api/voice/toggle -H 'Content-Type: application/json' -d '{"on":false}'
+
+# Say something on the speaker
+curl -X POST ${base}/api/voice/say -H 'Content-Type: application/json' -d '{"text":"Dinner is ready"}'
+
+# On the board itself (no password needed):
+#   ~/assistant/listen.sh      ~/assistant/toggle.sh [on|off]
+
+# Home Assistant configuration.yaml:
+rest_command:
+  agent_listen:
+    url: "${base}/api/voice/listen"
+    method: post
+  agent_listening:   # data: {on: true} / {on: false}
+    url: "${base}/api/voice/toggle"
+    method: post
+    content_type: "application/json"
+    payload: '{"on": {{ on | lower }}}'
+  agent_say:
+    url: "${base}/api/voice/say"
+    method: post
+    content_type: "application/json"
+    payload: '{"text": "{{ text }}"}'`;
+}
+function showIndicatorFields() {
+  $("#i-gpio").hidden = $("#i-type").value !== "gpio"; $("#i-ha").hidden = $("#i-type").value !== "ha"; $("#i-mcu").hidden = $("#i-type").value !== "mcu";
+}
+// Header pins with PWM on the UNO Q (marked ~ on the board).
+$("#i-mcu-pin").innerHTML = [2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((p) => `<option value="${p}">D${p}</option>`).join("");
+$("#i-type").onchange = showIndicatorFields;
+$("#v-gpio-on").onchange = () => { $("#v-gpio").hidden = !$("#v-gpio-on").checked; };
+
+async function loadVoice() {
+  try {
+    const d = await api("/api/voice/devices");
+    const opts = (list, cur) => list.map((x) => `<option value="${esc(x.id)}" ${x.id === cur ? "selected" : ""}>${esc(x.label)}</option>`).join("");
+    $("#v-mic").innerHTML = opts(d.mics, V().mic); $("#v-speaker").innerHTML = opts(d.speakers, V().speaker);
+    $("#v-spk").disabled = d.speaker_volume.percent == null; $("#v-gain").disabled = d.mic_gain.percent == null;
+    $("#v-spk").value = d.speaker_volume.percent ?? 0; $("#v-gain").value = d.mic_gain.percent ?? 0; showSpk(); showGain();
+  } catch (e) { say($("#v-dev-msg"), e.message, false); }
+  loadVoices(); loadEvents(); loadCatalog();
+}
+let VOICES = [];
+async function loadVoices() {
+  const vs = VOICES = await api("/api/voice/voices");
+  const cur = $("#p-voice").value || EDIT?.voice;
+  $("#p-voice").innerHTML = vs.map((v) => `<option>${esc(v.name)}</option>`).join("");
+  if (cur) $("#p-voice").value = cur;
+  $("#v-voices").innerHTML = "<tr><th>Installed voice</th><th>Size</th><th></th></tr>" + vs.map((v) =>
+    `<tr><td>${esc(v.name)}${v.in_use ? " <span class='chip'>in use</span>" : ""}</td><td>${fmtBytes(v.size)}</td>
+     <td style="text-align:right">${v.in_use ? "" : `<button class="b danger" data-vdel="${esc(v.name)}">Delete</button>`}</td></tr>`).join("");
+}
+let CATALOG = [];
+async function loadCatalog() {
+  if (CATALOG.length) return;
+  try {
+    CATALOG = await api("/api/voice/catalog");
+    const langs = [...new Set(CATALOG.map((v) => v.language))].sort();
+    $("#v-cat-lang").innerHTML = langs.map((l) => `<option ${l === "English" ? "selected" : ""}>${esc(l)}</option>`).join("");
+    showCatalog();
+  } catch (e) { $("#v-cat-lang").innerHTML = "<option>catalog unavailable (no internet?)</option>"; }
+}
+function showCatalog() {
+  $("#v-cat").innerHTML = CATALOG.filter((v) => v.language === $("#v-cat-lang").value).map((v) =>
+    `<option value="${esc(v.key)}">${esc(v.key)} · ${esc(v.region)} · ${v.quality} · ${fmtBytes(v.size)}</option>`).join("");
+}
+$("#v-cat-lang").onchange = showCatalog;
+async function loadEvents() {
+  const evs = await api("/api/voice/events");
+  $("#v-events").innerHTML = evs.length ? "<tr><th>Heard</th><th>Reply</th><th>Time</th></tr>" + evs.map((e) => {
+    const t = [e.stt_s != null && `hear ${e.stt_s}s`, e.agent_s != null && `think ${e.agent_s}s`].filter(Boolean).join(" · ");
+    return `<tr><td>${esc(e.heard || "(nothing)")}<div class="meta hint" style="margin:0">${esc(e.source)}</div></td>
+      <td>${esc(e.error ? "⚠️ " + e.error : e.reply || "")}</td><td class="hint">${t}</td></tr>`;
+  }).join("") : "<tr><td class='hint'>No voice interactions yet.</td></tr>";
+}
+const STATE_TEXT = {off: "Off", idle: "Waiting", listening: "🎙️ Listening…", thinking: "Thinking…", speaking: "🔊 Speaking"};
+let lastVoiceState = "";
+function renderVoiceStatus(v) {
+  if (!CFG) return;
+  const on = v.state !== "off";
+  chip("#c-voice", on ? (v.state === "idle" ? "ok" : "warn") : "", on ? (STATE_TEXT[v.state] === "Waiting" ? "Listening on" : STATE_TEXT[v.state]) : "Listening off");
+  if ($("#v-enabled").checked !== on && document.activeElement !== $("#v-enabled")) $("#v-enabled").checked = on;
+  const wake = V().wake_enabled ? `say "${V().wake_phrase}"` : "wake phrase off";
+  $("#v-status").innerHTML = `${STATE_TEXT[v.state] || v.state}${v.state === "idle" ? ` · ${esc(wake)}` : ""}${v.note ? " · " + esc(v.note) : ""}` +
+    (v.error ? `<br><span class="msg bad">${esc(v.error)}</span>` : "") +
+    (v.indicator_error ? `<br><span class="msg bad">Indicator: ${esc(v.indicator_error)}</span>` : "");
+  const dl = v.download;
+  if (dl.name) $("#v-dl-msg").textContent = `${dl.name}: ${dl.status}`;
+  if (dl.status === "done" && $("#v-voices").dataset.dl !== dl.name) { $("#v-voices").dataset.dl = dl.name; loadVoices(); }
+  if (lastVoiceState === "speaking" && v.state !== "speaking" || lastVoiceState === "thinking" && v.state === "idle") loadEvents();
+  lastVoiceState = v.state;
+}
+// Fast mic meter while the Voice tab is open.
+setInterval(async () => {
+  if (document.hidden || !$("#t-voice").classList.contains("on")) return;
+  try { const l = await api("/api/voice/level"); $("#v-meter").style.width = (l.level * 100).toFixed(0) + "%"; } catch {}
+}, 300);
+
+async function saveVoice(btn, msg, values, okText) {
+  return act(btn, msg, async () => { CFG = await api("/api/config/voice", values); fillVoice(); }, okText);
+}
+async function setListening(on, btn) {
+  return act(btn, $("#v-msg"), async () => {
+    const r = await api("/api/voice/toggle", on === undefined ? {} : {on});
+    CFG = await api("/api/config"); fillVoice(); poll();
+    say($("#v-msg"), r.enabled ? "Listening on" : "Listening off", true);
+  });
+}
+$("#v-enabled").onchange = () => setListening($("#v-enabled").checked, $("#v-enabled"));
+$("#c-voice").onclick = () => setListening(undefined, $("#c-voice"));
+$("#v-tlearn").onclick = () => act($("#v-tlearn"), $("#v-trig-msg"), async () => {
+  say($("#v-trig-msg"), "Press the button now (10 seconds)…", true);
+  const k = await api("/api/voice/learn-key", {which: "toggle"}); CFG = await api("/api/config"); fillVoice();
+  say($("#v-trig-msg"), `Learned: ${k.label}`, true);
+});
+$("#v-tkey-clear").onclick = () => saveVoice($("#v-tkey-clear"), $("#v-trig-msg"), {toggle_key: null}, "Button cleared");
+$("#v-listen").onclick = () => act($("#v-listen"), $("#v-msg"), () => api("/api/voice/listen", {source: "web"}), "Listening…");
+$("#v-dev-save").onclick = () => saveVoice($("#v-dev-save"), $("#v-dev-msg"), {mic: $("#v-mic").value, speaker: $("#v-speaker").value}).then(loadVoice);
+$("#v-spk").onchange = () => act($("#v-spk"), $("#v-dev-msg"), () => api("/api/voice/volume", {speaker_volume: +$("#v-spk").value}), "Volume set");
+$("#v-gain").onchange = () => act($("#v-gain"), $("#v-dev-msg"), () => api("/api/voice/volume", {mic_gain: +$("#v-gain").value}), "Gain set");
+$("#v-test-mic").onclick = () => act($("#v-test-mic"), $("#v-dev-msg"), async () => {
+  say($("#v-dev-msg"), "Recording 3 seconds… say something", true);
+  const r = await api("/api/voice/test-mic", {seconds: 3});
+  say($("#v-dev-msg"), `Peak ${r.peak}% · heard: "${r.heard || "nothing"}"` + (r.peak > 95 ? " · too loud, lower the gain" : r.peak < 10 ? " · very quiet, raise the gain" : ""), r.peak >= 10);
+});
+$("#v-test-spk").onclick = () => act($("#v-test-spk"), $("#v-dev-msg"), () => api("/api/voice/say", {text: "This is a test of the speaker."}), "Playing…");
+$("#v-learn").onclick = () => act($("#v-learn"), $("#v-trig-msg"), async () => {
+  say($("#v-trig-msg"), "Press the button now (10 seconds)…", true);
+  const k = await api("/api/voice/learn-key", {}); CFG = await api("/api/config"); fillVoice();
+  say($("#v-trig-msg"), `Learned: ${k.label}`, true);
+});
+$("#v-key-clear").onclick = () => saveVoice($("#v-key-clear"), $("#v-trig-msg"), {key: null}, "Button cleared");
+$("#v-trig-save").onclick = () => saveVoice($("#v-trig-save"), $("#v-trig-msg"), {
+  wake_enabled: $("#v-wake-on").checked, wake_phrase: $("#v-wake").value.trim().toLowerCase(), listen_seconds: +$("#v-listen-s").value,
+  chime: $("#v-chime").checked,
+  gpio: $("#v-gpio-on").checked ? {chip: $("#v-gpio-chip").value, line: +$("#v-gpio-line").value, edge: $("#v-gpio-edge").value, bias: "pull-up"} : null,
+});
+$("#v-rec-save").onclick = () => saveVoice($("#v-rec-save"), $("#v-rec-msg"), {recognition: $("#v-rec").value, extra_words: $("#v-words").value});
+// ---- personalities ----
+const STATES = ["idle", "listening", "thinking", "speaking"];
+let EDIT = null, EDIT_KEY = null, DIRTY = false;  // the personality in the editor; EDIT_KEY null = not saved yet
+function fillPersonas(keep) {
+  const ps = CFG.personas || {}, active = V().persona;
+  const pick = keep ?? (EDIT_KEY && ps[EDIT_KEY] ? EDIT_KEY : active && ps[active] ? active : Object.keys(ps)[0]);
+  $("#p-pick").innerHTML = Object.entries(ps).map(([k, p]) =>
+    `<option value="${esc(k)}">${esc(p.label)}${k === active ? " (in use)" : ""}</option>`).join("");
+  if (DIRTY && keep === undefined) { if (EDIT_KEY) $("#p-pick").value = EDIT_KEY; return; }  // don't throw away unsaved edits
+  if (pick && ps[pick]) { $("#p-pick").value = pick; edit(pick, ps[pick]); }
+}
+document.querySelector("#t-voice").addEventListener("input", (e) => { if (e.target.closest("#p-editor-fields")) DIRTY = true; });
+function edit(key, p) {
+  EDIT_KEY = key; EDIT = JSON.parse(JSON.stringify(p)); DIRTY = !key;
+  $("#p-title").textContent = key ? `Edit "${p.label}"` : "New personality (not saved yet)";
+  $("#p-label").value = p.label; $("#p-speed").value = p.speed; $("#p-vol").value = p.voice_volume; $("#p-temp").value = p.temperature;
+  showSpeed(); showVol(); showTemp();
+  $("#p-wake").value = p.wake_phrase; $("#p-prompt").value = p.prompt;
+  $("#p-ok").value = p.reply_ok; $("#p-fail").value = p.reply_fail; $("#p-unheard").value = p.reply_unheard;
+  $("#p-eggs").value = (p.eggs || []).map((e) => e.phrases.join(" | ") + " => " + (e.replies || [e.reply]).join(" | ")).join("\n");
+  if (![...$("#p-voice").options].some((o) => o.value === p.voice)) $("#p-voice").insertAdjacentHTML("beforeend", `<option>${esc(p.voice)}</option>`);
+  $("#p-voice").value = p.voice;
+  $("#p-states").innerHTML = "<tr><th>When</th><th>Colour</th><th>Brightness</th></tr>" + STATES.map((s) => `<tr><td>${s}</td>
+    <td><input type="color" id="p-c-${s}" value="${esc(p.states[s].color)}"></td>
+    <td><input type="range" id="p-b-${s}" min="0" max="100" value="${p.states[s].brightness}"></td></tr>`).join("");
+  $("#p-del").disabled = !key || key === V().persona;
+  $("#p-use").disabled = !key;
+}
+function editorValues() {
+  const states = {};
+  for (const s of STATES) states[s] = {color: $(`#p-c-${s}`).value, brightness: +$(`#p-b-${s}`).value};
+  const split = (s) => s.split("|").map((x) => x.trim()).filter(Boolean);
+  const eggs = $("#p-eggs").value.split("\n").filter((l) => l.includes("=>")).map((l) => {
+    const [left, ...right] = l.split("=>");
+    return {phrases: split(left), replies: split(right.join("=>"))};
+  }).filter((e) => e.phrases.length && e.replies.length);
+  return {eggs,label: $("#p-label").value.trim(), voice: $("#p-voice").value, speed: +$("#p-speed").value, voice_volume: +$("#p-vol").value,
+          wake_phrase: $("#p-wake").value.trim().toLowerCase(), temperature: +$("#p-temp").value, prompt: $("#p-prompt").value,
+          reply_ok: $("#p-ok").value, reply_fail: $("#p-fail").value, reply_unheard: $("#p-unheard").value, states};
+}
+$("#p-pick").onchange = () => {
+  if (DIRTY && !confirm("Discard your unsaved changes?")) { $("#p-pick").value = EDIT_KEY || ""; return; }
+  edit($("#p-pick").value, CFG.personas[$("#p-pick").value]);
+};
+$("#p-use").onclick = () => act($("#p-use"), $("#p-msg"), async () => {
+  CFG = await api("/api/personas/apply", {key: EDIT_KEY}); fillVoice(); loadVoices();
+}, "Now using it (a different voice takes ~15 s to load)");
+$("#p-new").onclick = () => {
+  const base = CFG.personas.assistant || Object.values(CFG.personas)[0];
+  edit(null, {...JSON.parse(JSON.stringify(base)), label: "New personality",
+              prompt: "You are … Reply in one or two short sentences. No lists or markdown."});
+  $("#p-label").focus(); $("#p-label").select();
+};
+$("#p-dup").onclick = () => { edit(null, {...editorValues(), label: $("#p-label").value + " copy"}); $("#p-label").focus(); };
+$("#p-capture").onclick = () => {
+  const label = prompt("Name for the new personality:", "My personality"); if (!label) return;
+  act($("#p-capture"), $("#p-msg"), async () => { const r = await api("/api/personas/capture", {label}); CFG = r.config; EDIT_KEY = r.key; fillPersonas(r.key); }, "Saved");
+};
+$("#p-del").onclick = () => {
+  if (!EDIT_KEY || !confirm(`Delete the personality "${CFG.personas[EDIT_KEY].label}"?`)) return;
+  act($("#p-del"), $("#p-msg"), async () => { CFG = (await api("/api/personas/delete", {key: EDIT_KEY})).config; EDIT_KEY = null; fillPersonas(); }, "Deleted");
+};
+$("#p-restore").onclick = () => {
+  if (!confirm("Put HAL 9000 and Friendly assistant back to their original settings? Your own personalities are kept.")) return;
+  act($("#p-restore"), $("#p-msg"), async () => { CFG = (await api("/api/personas/restore", {})).config; fillPersonas(); }, "Restored");
+};
+async function savePersona(apply, btn) {
+  return act(btn, $("#p-edit-msg"), async () => {
+    const r = await api("/api/personas/save", {key: EDIT_KEY, persona: editorValues(), apply});
+    CFG = r.config; EDIT_KEY = r.key; fillVoice(); fillPersonas(r.key);
+  }, apply ? "Saved and in use" : EDIT_KEY === V().persona ? "Saved (in use, so it applies now)" : "Saved");
+}
+$("#p-save").onclick = () => savePersona(false, $("#p-save"));
+$("#p-save-use").onclick = () => savePersona(true, $("#p-save-use"));
+$("#v-name").onchange = () => saveVoice($("#v-name"), $("#p-msg"), {name: $("#v-name").value.trim()}, "Saved");
+$("#v-say-go").onclick = () => act($("#v-say-go"), $("#p-edit-msg"), () => api("/api/voice/say",
+  {text: $("#v-say").value, voice: $("#p-voice").value, speed: +$("#p-speed").value, volume: +$("#p-vol").value}), "Speaking…");
+$("#v-cat-go").onclick = () => act($("#v-cat-go"), $("#v-dl-msg"), () => api("/api/voice/download", {key: $("#v-cat").value}), "Downloading…");
+$("#v-url-go").onclick = () => act($("#v-url-go"), $("#v-dl-msg"), () => api("/api/voice/download", {url: $("#v-url").value.trim()}), "Downloading…");
+$("#v-voices").onclick = async (e) => {
+  const name = e.target.dataset.vdel; if (!name || !confirm(`Delete voice ${name}?`)) return;
+  await act(e.target, $("#v-dl-msg"), () => api("/api/voice/delete", {name}), "Deleted"); loadVoices();
+};
+function indicatorValues() {
+  return {type: $("#i-type").value, entity: $("#i-entity").value.trim(), mcu: {pin: +$("#i-mcu-pin").value},
+          gpio: {chip: $("#i-gpio-chip").value, line: +$("#i-gpio-line").value, active_low: $("#i-gpio-low").checked}};
+}
+$("#i-save").onclick = () => act($("#i-save"), $("#i-msg"), async () => { CFG = await api("/api/config/indicator", indicatorValues()); });
+$("#i-states").onclick = async (e) => {
+  const s = e.target.dataset.test; if (!s) return;
+  await act(e.target, $("#i-msg"), async () => {
+    CFG = await api("/api/config/indicator", indicatorValues());
+    await api("/api/indicator/test", {state: s});
+  }, `Showing "${s}" for 3 seconds`);
+};
+(async () => {
+  CFG = await api("/api/config"); fill();
+  await poll(); setInterval(() => { if (!document.hidden) poll(); }, 4000);
+  loadAgent(); loadSaved();
+  if (STATUS?.net.hotspot) { document.querySelector('nav button[data-tab="network"]').click(); scan(); }
+})();
+</script>
+</body>
+</html>

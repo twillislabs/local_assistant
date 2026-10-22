@@ -1,0 +1,5 @@
+requests>=2.31
+numpy>=2.0
+msgpack>=1.0
+vosk==0.3.45
+piper-tts==1.8.0
