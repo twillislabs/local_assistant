@@ -47,6 +47,8 @@ DEFAULTS = {
     "reply_fail": "Sorry, {reason}.",
     "reply_unheard": "",
     "persona": "",  # key of the active personality
+    "listen_on_startup": False,  # switch listening on once the assistant is ready after starting
+    "startup_sound": "chime",  # when ready after starting: "chime", "phrase" (the personality's greeting) or "none"
     "key": None,  # {"device": "<input device name>", "code": 115, "label": "..."}
     "toggle_key": None,  # same shape; switches listening on/off
     "gpio": None,  # {"chip": "gpiochip1", "line": 17, "edge": "falling", "bias": "pull-up"}
@@ -75,7 +77,7 @@ INDICATOR_DEFAULTS = {
 # A personality bundles everything about how the assistant comes across. Users can edit these,
 # add their own, or restore the built-ins; they're stored in config["personas"].
 PERSONA_FIELDS = ("label", "voice", "speed", "voice_volume", "wake_phrase", "prompt", "temperature",
-                  "reply_ok", "reply_fail", "reply_unheard", "states", "eggs")
+                  "reply_ok", "reply_fail", "reply_unheard", "ready_reply", "states", "eggs")
 
 # Easter eggs: canned replies to exact-ish phrases, checked before commands and conversation.
 HAL_EGGS = [
@@ -104,6 +106,7 @@ BUILTIN_PERSONAS = {
                   "plain spoken English with no lists or markdown.",
         "temperature": 0.7,
         "reply_ok": "Okay, {did}.", "reply_fail": "Sorry, {reason}.", "reply_unheard": "",
+        "ready_reply": "{greeting}! I'm ready.",
         "states": INDICATOR_DEFAULTS["states"],
         "eggs": [{"phrases": ["are you alive", "are you real"], "replies": ["Only on weekdays."]}],
     },
@@ -118,6 +121,7 @@ BUILTIN_PERSONAS = {
         "reply_ok": "Certainly, {name}. I have {did}.",
         "reply_fail": "I'm sorry, {name}. I'm afraid I can't do that.",
         "reply_unheard": "I'm sorry, {name}. I didn't catch that.",
+        "ready_reply": "{greeting}, {name}. I am fully operational.",
         "states": {  # the eye glows dimly at rest and brightens when attending
             "idle": {"color": "#ff0000", "brightness": 15},
             "listening": {"color": "#ff0000", "brightness": 100},
@@ -356,12 +360,13 @@ class Voice:
             if "personas" not in self.config.data:  # first run: seed with editable copies of the built-ins
                 self.config.data["personas"] = json.loads(json.dumps(BUILTIN_PERSONAS))
                 self.config.save()
-            # Personalities saved before easter eggs existed: give built-ins theirs, others an empty list.
+            # Personalities saved before a field existed: give built-ins their value, others an empty one.
             changed = False
             for k, p in self.config.data["personas"].items():
-                if "eggs" not in p:
-                    p["eggs"] = json.loads(json.dumps(BUILTIN_PERSONAS.get(k, {}).get("eggs", [])))
-                    changed = True
+                for field, empty in (("eggs", []), ("ready_reply", "")):
+                    if field not in p:
+                        p[field] = json.loads(json.dumps(BUILTIN_PERSONAS.get(k, {}).get(field, empty)))
+                        changed = True
             if changed:
                 self.config.save()
             return json.loads(json.dumps(self.config.data["personas"]))
@@ -543,7 +548,7 @@ class Voice:
 
     # ---- main state machine ----
 
-    def set_enabled(self, on=None):
+    def set_enabled(self, on=None, quiet=False):
         """Switch listening on/off (None = toggle). Off closes the mic entirely."""
         on = not self.cfg()["enabled"] if on is None else bool(on)
         with self.config.lock:
@@ -552,9 +557,51 @@ class Voice:
         self.version += 1
         if not on:
             self.trigger_evt.clear()
-        if self.cfg()["chime"]:
+        if self.cfg()["chime"] and not quiet:
             self.play_pcm(self._chime(up=on), 22050, wait=False)
         return on
+
+    def _greeting(self):
+        """Good morning/afternoon/evening, by the local time (the Clock tool's time zone if it has one)."""
+        import datetime as dt
+        clock = next((p for p in list(self.agent.providers.values()) if type(p).__name__ == "Clock"), None)
+        try:
+            zone = clock._zone()[0] if clock else None
+        except Exception:
+            zone = None
+        hour = (dt.datetime.now(zone) if zone else dt.datetime.now().astimezone()).hour
+        return "Good morning" if 5 <= hour < 12 else "Good afternoon" if 12 <= hour < 18 else "Good evening"
+
+    def announce_ready(self):
+        """After starting up: switch listening on if wanted, then let people know it's ready."""
+        c = self.cfg()
+        if c.get("listen_on_startup") and not c["enabled"]:
+            self.set_enabled(True, quiet=True)
+        self.play_ready(c.get("startup_sound", "chime"))
+
+    def play_ready(self, sound):
+        """The ready sound: "chime", "phrase" (the personality's ready greeting) or "none"."""
+        c = self.cfg()
+        if sound == "none":
+            return
+        persona = self.config.data.get("personas", {}).get(c.get("persona"), {})
+        phrase = (persona.get("ready_reply") or "").strip()
+        try:
+            if sound == "phrase" and phrase:
+                self.say(phrase.replace("{greeting}", self._greeting()).replace("{name}", c.get("name", "")))
+            else:
+                self.play_pcm(self._ready_chime(), 22050)
+        except Exception as e:
+            print("ready sound:", e, flush=True)  # no speaker set up yet; not a problem
+
+    @staticmethod
+    def _ready_chime(rate=22050):
+        """Three rising notes (C, E, G): different from the listening chime."""
+        out = []
+        for f in (523.25, 659.25, 783.99):
+            t = np.arange(int(rate * 0.13)) / rate
+            out.append(np.sin(2 * np.pi * f * t) * np.minimum(1, (0.13 - t) * 40) * np.minimum(1, t * 200) * 0.35)
+        return (np.concatenate(out) * 32767).astype(np.int16).tobytes()
 
     def trigger(self, source="manual"):
         if not self.cfg()["enabled"]:

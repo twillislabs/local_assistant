@@ -115,6 +115,16 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
     <div class="card">
       <h2>Voice mode</h2>
       <label class="check"><input type="checkbox" id="v-enabled"> Listen for the wake phrase and triggers</label>
+      <label class="check"><input type="checkbox" id="v-startup-listen"> Start listening when the assistant starts</label>
+      <div class="row">
+        <div><label>When it's ready after starting</label>
+          <select id="v-startup-sound">
+            <option value="chime">Play a chime</option>
+            <option value="phrase">Say the personality's ready greeting</option>
+            <option value="none">Nothing</option>
+          </select></div>
+        <div><label>&nbsp;</label><button class="b" id="v-startup-try">Try it</button></div>
+      </div>
       <div class="hint" id="v-status">—</div>
       <div class="btns"><button class="b primary" id="v-listen">Listen now</button><span class="msg" id="v-msg"></span></div>
       <table id="v-events" style="margin-top:10px"></table>
@@ -205,6 +215,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
       <label>Reply after a command ({did} = what it did, {name})</label><input type="text" id="p-ok">
       <label>Reply when it can't ({reason}, {name})</label><input type="text" id="p-fail">
       <label>Reply when it hears nothing (blank = just a low chime)</label><input type="text" id="p-unheard">
+      <label>Ready greeting after starting ({greeting} = good morning/afternoon/evening, {name})</label><input type="text" id="p-ready">
       <label>Easter eggs: one per line, <code>phrase | other phrase =&gt; reply | another reply</code></label>
       <textarea id="p-eggs" style="min-height:110px" placeholder="open the pod bay doors => I'm sorry, {name}. I'm afraid I can't do that."></textarea>
       <p class="hint">Checked before anything else, so they never switch devices. If there are several replies, one is picked at random. Use phrases of two or more words so they don't catch normal commands.</p>
@@ -1149,6 +1160,7 @@ const showTemp = rangeLabel("#p-temp", "#p-temp-val", (v) => (+v).toFixed(1));
 function fillVoice() {
   const v = V(), ind = CFG.indicator;
   $("#v-enabled").checked = v.enabled; $("#v-wake-on").checked = v.wake_enabled; $("#v-wake").value = v.wake_phrase;
+  $("#v-startup-listen").checked = !!v.listen_on_startup; $("#v-startup-sound").value = v.startup_sound || "chime";
   $("#v-listen-s").value = v.listen_seconds; $("#v-chime").checked = v.chime;
   $("#v-key").textContent = v.key ? v.key.label : "none";
   $("#v-tkey").textContent = v.toggle_key ? v.toggle_key.label : "none";
@@ -1311,6 +1323,11 @@ async function setListening(on, btn) {
   });
 }
 $("#v-enabled").onchange = () => setListening($("#v-enabled").checked, $("#v-enabled"));
+$("#v-startup-listen").onchange = () => saveVoice($("#v-startup-listen"), $("#v-msg"), {listen_on_startup: $("#v-startup-listen").checked},
+  $("#v-startup-listen").checked ? "It will start listening when it starts" : "It will keep listening switched as it was");
+$("#v-startup-sound").onchange = () => saveVoice($("#v-startup-sound"), $("#v-msg"), {startup_sound: $("#v-startup-sound").value}, "Saved");
+$("#v-startup-try").onclick = () => act($("#v-startup-try"), $("#v-msg"), () =>
+  api("/api/voice/ready-sound", {sound: $("#v-startup-sound").value}), "Done");
 $("#c-voice").onclick = () => setListening(undefined, $("#c-voice"));
 $("#v-tlearn").onclick = () => act($("#v-tlearn"), $("#v-trig-msg"), async () => {
   say($("#v-trig-msg"), "Press the button now (10 seconds)…", true);
@@ -1365,6 +1382,7 @@ function edit(key, p) {
   showSpeed(); showVol(); showTemp();
   $("#p-wake").value = p.wake_phrase; $("#p-prompt").value = p.prompt;
   $("#p-ok").value = p.reply_ok; $("#p-fail").value = p.reply_fail; $("#p-unheard").value = p.reply_unheard;
+  $("#p-ready").value = p.ready_reply || "";
   $("#p-eggs").value = (p.eggs || []).map((e) => e.phrases.join(" | ") + " => " + (e.replies || [e.reply]).join(" | ")).join("\n");
   if (![...$("#p-voice").options].some((o) => o.value === p.voice)) $("#p-voice").insertAdjacentHTML("beforeend", `<option>${esc(p.voice)}</option>`);
   $("#p-voice").value = p.voice;
@@ -1384,7 +1402,8 @@ function editorValues() {
   }).filter((e) => e.phrases.length && e.replies.length);
   return {eggs,label: $("#p-label").value.trim(), voice: $("#p-voice").value, speed: +$("#p-speed").value, voice_volume: +$("#p-vol").value,
           wake_phrase: $("#p-wake").value.trim().toLowerCase(), temperature: +$("#p-temp").value, prompt: $("#p-prompt").value,
-          reply_ok: $("#p-ok").value, reply_fail: $("#p-fail").value, reply_unheard: $("#p-unheard").value, states};
+          reply_ok: $("#p-ok").value, reply_fail: $("#p-fail").value, reply_unheard: $("#p-unheard").value,
+          ready_reply: $("#p-ready").value, states};
 }
 $("#p-pick").onchange = () => {
   if (DIRTY && !confirm("Discard your unsaved changes?")) { $("#p-pick").value = EDIT_KEY || ""; return; }

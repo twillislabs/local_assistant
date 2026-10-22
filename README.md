@@ -170,6 +170,10 @@ use it. Header values (API keys) are stored in the config file and shown as dots
 
 - **Triggers**: wake phrase, a learned button, GPIO, `POST /api/voice/listen`, `./listen.sh`, or Home Assistant.
 - **Toggle listening**: header switch, a second learned button, `POST /api/voice/toggle`, or `./toggle.sh [on|off]`.
+- **Starting up**: on the Voice page, choose whether it starts listening when it starts, and what it does once it's
+  ready: a chime, the personality's ready greeting ("Good evening, Dave. I am fully operational."), or nothing.
+  "Ready" waits for every tool and the model's warm-up, so the first request after the sound is fast. On an
+  Arduino UNO Q that's about 3½ minutes after power-on; a network model server makes it much quicker.
 - **Speech recognition** uses [Vosk](https://alphacephei.com/vosk/). In the default *fast* mode, commands are
   recognised from a vocabulary built from your devices, rooms and tool keywords (about 0.3 s on a UNO Q), and
   conversation uses full English in parallel. If it mishears a name, add how you say it under **Extra words**.

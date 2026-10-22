@@ -390,6 +390,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/voice/listen":
                 voice.trigger(b.get("source", "http"))
                 return self._send(200, {"ok": True})
+            if path == "/api/voice/ready-sound":  # "Try it" on the Voice page
+                voice.play_ready(b.get("sound", "chime"))
+                return self._send(200, {"ok": True})
             if path == "/api/voice/toggle":
                 return self._send(200, {"enabled": voice.set_enabled(b.get("on"))})
             if path == "/api/voice/say":
@@ -559,21 +562,42 @@ def main():
     threading.Thread(target=net.watchdog, daemon=True).start()
     voice.personas()  # seed/upgrade saved personalities (e.g. add easter eggs) before anything reads them
     voice.start()
-    threading.Thread(target=warm_chat, daemon=True).start()
 
     def load_agent():
         # Retry failing tools every minute (e.g. Home Assistant unreachable in hotspot mode) and
         # check for device changes every 10 minutes. Unchanged prompts aren't re-warmed.
-        last = None
+        last, started = None, time.time()
+        agent.partial_warm_ok = False  # at startup, wait for every tool before warming (see Agent._reload)
         while True:
+            if time.time() - started > 180:
+                agent.partial_warm_ok = True  # a tool that's still down after 3 minutes isn't worth waiting for
             ok = agent.refresh_if_changed()
             summary = f"{len(agent.tools)} tools, {len(agent.devices)} devices" + ("" if ok else f"; problems: {agent.error}")
             if summary != last:
                 print("tools:", summary, flush=True)
                 last = summary
-            time.sleep(600 if ok else 60)
+            # Right after boot, names like homeassistant.local can take a little while to resolve: retry quickly.
+            time.sleep(600 if ok else 10 if time.time() - started < 180 else 60)
+
+    def when_ready():
+        # "Ready" = every tool loaded and the command model warmed with them, so the first request
+        # after the sound works and is fast. If a tool is still failing after 3 minutes, don't wait for
+        # it; after 10 minutes, announce anyway.
+        start = time.time()
+        while time.time() - start < 600:
+            all_loaded = agent.loaded_once and (not agent.error or time.time() - start > 180)
+            warmed = not agent.ready or agent.warm_state not in ("cold", "warming")
+            if all_loaded and warmed:
+                break
+            time.sleep(2)
+        print(f"ready after {time.time() - start:.0f}s ({agent.warm_state})", flush=True)
+        voice.announce_ready()
+        # Load the conversation model only now: during startup it competes for the CPU with the
+        # command model's warm-up, which is what "ready" waits for.
+        warm_chat()
 
     threading.Thread(target=load_agent, daemon=True).start()
+    threading.Thread(target=when_ready, daemon=True).start()
     server.serve_forever()
 
 

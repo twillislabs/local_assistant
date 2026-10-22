@@ -181,8 +181,11 @@ class Agent:
         self.names, self.areas, self.domains = {}, {}, {}
         self.system, self.examples = "", []
         self._signature = None
+        self._warmed_signature = None  # the prompt last sent for warming
+        self.partial_warm_ok = True  # web.py turns this off for the first minutes after starting
         self._history = []
         self._reload_lock = threading.Lock()
+        self.loaded_once = False  # set after the first load of tools, whether or not they all worked
         self._down = {}  # Ollama server URL -> time until which it's treated as down
         self.active = {"ollama": None, "chat": None}  # the server each part last used
 
@@ -286,11 +289,19 @@ class Agent:
             self.areas = {a.lower(): a for _, _, areas in devices for a in areas}
             self.system, self.examples = system, examples
             self.ready = bool(tools)
+            self.loaded_once = True
             self.error = "; ".join(failed) or ("" if tools else "no tools are installed or working")
-            changed, self._signature = signature != self._signature, signature
-            if changed:
+            self._signature = signature
+            # An unchanged prompt is still cached, so don't pay for another warm-up. While starting up,
+            # don't warm a prompt that's missing a tool still being retried (e.g. Home Assistant before
+            # the network is up): that warm-up would be wasted and delay the real one.
+            should_warm = (warm and tools and signature != self._warmed_signature
+                           and (not failed or self.partial_warm_ok))
+            if signature != self._warmed_signature:
                 self.warm_state = "cold"
-        if warm and changed and tools:  # an unchanged prompt is still cached; don't pay for a warm-up
+            if should_warm:
+                self._warmed_signature = signature
+        if should_warm:
             threading.Thread(target=self.warm, daemon=True).start()
         return not failed
 
