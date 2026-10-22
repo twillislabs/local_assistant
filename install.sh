@@ -19,11 +19,16 @@ done
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing $1. Install it first: $2"; exit 1; }
 }
+want() {
+  command -v "$1" >/dev/null 2>&1 || echo "Note: $1 not found, so $2 won't be available (install: $3)."
+}
 need python3 "sudo apt install python3 python3-venv"
-need nmcli "sudo apt install network-manager"
-need arecord "sudo apt install alsa-utils"
 need curl "sudo apt install curl"
 need ollama "curl -fsSL https://ollama.com/install.sh | sh"
+python3 -c "import venv, ensurepip" 2>/dev/null || { echo "Missing python3-venv. Install it first: sudo apt install python3-venv"; exit 1; }
+want nmcli "Wi-Fi setup, static IP and the setup hotspot" "sudo apt install network-manager"
+want arecord "voice mode" "sudo apt install alsa-utils"
+want gpioset "GPIO buttons and LEDs" "sudo apt install gpiod"
 
 echo "== Python environment"
 [ -x "$PY" ] || python3 -m venv "$DIR/venv"
@@ -104,5 +109,5 @@ PORT=8080
 [ "$(cat /proc/sys/net/ipv4/ip_unprivileged_port_start 2>/dev/null)" -le 80 ] 2>/dev/null && PORT=80
 echo
 echo "Done. Open http://$(hostname).local$([ $PORT = 80 ] || echo ":$PORT") and set up Home Assistant on the Home Assistant page."
-echo "Optional one-time root setup (port 80, reboot button, captive portal, header-pin LED):"
+echo "Optional one-time root setup (port 80, reboot button, captive portal; on a UNO Q also the header-pin LED):"
 echo "  sudo sh $DIR/setup-root.sh && sudo reboot"

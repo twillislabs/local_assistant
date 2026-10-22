@@ -6,9 +6,12 @@ works in hotspot mode with no internet.
   /                                              - setup + chat UI
 """
 import base64
+import glob
 import hmac
 import json
 import os
+import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -21,8 +24,10 @@ from urllib.parse import urlparse, parse_qs
 import requests
 
 import agent as agent_mod
+import bridge
+import tools as tools_mod
 import voice as voice_mod
-from agent import Agent, Config, HomeAssistant
+from agent import HA_ID, Agent, Config, HomeAssistant
 from netmgr import NetManager, NmError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -36,12 +41,49 @@ pull_state = {"name": "", "status": "", "completed": 0, "total": 0}
 PORT = 0
 
 
+MASK = "••••••"
+
+
+def mask_tool(entry):
+    """Hide header values (API keys) when sending a tool's settings to the browser."""
+    e = json.loads(json.dumps(entry))
+    if e.get("headers"):
+        e["headers"] = {k: (MASK if v else "") for k, v in e["headers"].items()}
+    return e
+
+
 def masked_config():
     voice.personas()  # make sure the editable personalities exist
     c = json.loads(json.dumps(config.data))
     c["ha"]["token_set"] = bool(c["ha"].pop("token"))
     c["ui"]["password_set"] = bool(c["ui"].pop("password"))
+    c["tools"] = [mask_tool(t) for t in c["tools"]]
     return c
+
+
+def platform_info():
+    """What this machine is and which hardware features the UI should offer."""
+    def read(path):
+        try:
+            return open(path).read().strip("\0\n ")
+        except OSError:
+            return ""
+    model = read("/proc/device-tree/model") or read("/sys/class/dmi/id/product_name") or platform.machine()
+    virt = subprocess.run(["systemd-detect-virt"], capture_output=True, text=True).stdout.strip() if shutil.which("systemd-detect-virt") else ""
+    leds = []
+    for path in sorted(glob.glob("/sys/class/leds/*")):
+        name = os.path.basename(path)
+        if not re.match(r"input\d+::|mmc\d+::", name):  # keyboard and SD-card activity LEDs aren't useful
+            leds.append({"name": name, "writable": os.access(f"{path}/brightness", os.W_OK)})
+    return {
+        "model": model, "arch": platform.machine(), "virtual": virt if virt and virt != "none" else "",
+        "unoq": "Arduino" in model and ("UNO Q" in model or "Imola" in model) or os.path.exists(bridge.SOCKET),
+        "bridge": os.path.exists(bridge.SOCKET),
+        "network_managed": net.managed, "wifi": net.wifi,
+        "audio": bool(shutil.which("arecord") and shutil.which("aplay")),
+        "gpio": sorted(os.path.basename(p) for p in glob.glob("/dev/gpiochip*")),
+        "leds": leds,
+    }
 
 
 def ollama_url(target="command"):
@@ -164,7 +206,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {
                     "net": net.status(),
                     "agent": {"ready": agent.ready, "error": agent.error, "warm": agent.warm_state,
-                              "devices": len(agent.devices), "tools": len(agent.tools)},
+                              "devices": len(agent.devices), "tools": len(agent.tools),
+                              "ha": agent.ha is not None, "providers": agent.status},
                     "ollama": ollama_info(),
                     "chat_ollama": ollama_info("chat"),
                     "pull": pull_state,
@@ -173,6 +216,10 @@ class Handler(BaseHTTPRequestHandler):
                               "indicator_error": voice.indicator.error},
                     "system": system_info(),
                 })
+            if url.path == "/api/platform":
+                return self._send(200, platform_info())
+            if url.path == "/api/tools":
+                return self._send(200, {"tools": [mask_tool(t) for t in config.get("tools")], "status": agent.status})
             if url.path == "/api/voice/level":  # polled fast by the mic meter
                 return self._send(200, {"level": round(voice.level, 3), "state": voice.state})
             if url.path == "/api/voice/devices":
@@ -209,6 +256,57 @@ class Handler(BaseHTTPRequestHandler):
                 if b.get("speak") and not b.get("dry_run"):
                     return self._send(200, voice.respond(b["text"]).get("result", {}))
                 return self._send(200, agent.ask(b["text"], dry_run=bool(b.get("dry_run"))))
+            if path == "/api/tools/save":
+                entry = b["tool"]
+                if entry.get("type") not in ("homeassistant", *tools_mod.KINDS):
+                    return self._send(400, {"error": "unknown tool type"})
+                with config.lock:
+                    current = config.data["tools"]
+                    old = next((t for t in current if t["id"] == entry.get("id")), None)
+                    if old is None:
+                        if entry["type"] == "homeassistant":
+                            entry["id"] = HA_ID
+                        else:
+                            base = re.sub(r"[^a-z0-9]+", "-", (entry.get("label") or entry["type"]).lower()).strip("-") or entry["type"]
+                            entry["id"], n = base, 2
+                            while any(t["id"] == entry["id"] for t in current) or entry["id"] == HA_ID:
+                                entry["id"], n = f"{base}-{n}", n + 1
+                        if any(t["id"] == entry["id"] for t in current):
+                            return self._send(400, {"error": "that tool is already installed"})
+                        current.append(entry)
+                    else:
+                        # Masked header values mean "keep the saved one".
+                        for k, v in list((entry.get("headers") or {}).items()):
+                            if v == MASK:
+                                entry["headers"][k] = (old.get("headers") or {}).get(k, "")
+                        current[current.index(old)] = entry
+                    config.save()
+                threading.Thread(target=agent.reload, daemon=True).start()
+                return self._send(200, {"id": entry["id"], "config": masked_config()})
+            if path == "/api/tools/delete":
+                with config.lock:
+                    config.data["tools"] = [t for t in config.data["tools"] if t["id"] != b["id"]]
+                    config.save()
+                threading.Thread(target=agent.reload, daemon=True).start()
+                return self._send(200, {"config": masked_config()})
+            if path == "/api/tools/test":
+                entry = dict(b["tool"])
+                old = next((t for t in config.get("tools") if t["id"] == entry.get("id")), {})
+                for k, v in list((entry.get("headers") or {}).items()):
+                    if v == MASK:
+                        entry["headers"][k] = (old.get("headers") or {}).get(k, "")
+                entry.setdefault("id", "test")
+                p = tools_mod.make(entry)
+                try:
+                    found = p.all_tool_names() if hasattr(p, "all_tool_names") else [t["name"] for t in p.tools()]
+                    out = {"ok": True, "tools": found}
+                    if b.get("args") is not None:  # optionally run the first tool once
+                        text, failed = p.call(p.tools()[0]["name"], b["args"])
+                        out.update(result=text[:1000], failed=failed, reply=None if failed else p.reply(p.tools()[0]["name"], b["args"], text))
+                    return self._send(200, out)
+                finally:
+                    if hasattr(p, "close"):
+                        p.close()
             if path == "/api/voice/listen":
                 voice.trigger(b.get("source", "http"))
                 return self._send(200, {"ok": True})
@@ -367,14 +465,16 @@ def main():
     threading.Thread(target=warm_chat, daemon=True).start()
 
     def load_agent():
-        while not agent.reload():
-            print("agent:", agent.error, flush=True)
-            time.sleep(30)  # HA unreachable (e.g. hotspot mode); keep trying
-        print(f"agent ready: {len(agent.devices)} devices, {len(agent.tools)} tools", flush=True)
+        # Retry failing tools every minute (e.g. Home Assistant unreachable in hotspot mode) and
+        # check for device changes every 10 minutes. Unchanged prompts aren't re-warmed.
+        last = None
         while True:
-            time.sleep(600)
-            if agent.refresh_if_changed():
-                print(f"devices changed in HA; reloaded: {len(agent.devices)} devices", flush=True)
+            ok = agent.refresh_if_changed()
+            summary = f"{len(agent.tools)} tools, {len(agent.devices)} devices" + ("" if ok else f"; problems: {agent.error}")
+            if summary != last:
+                print("tools:", summary, flush=True)
+                last = summary
+            time.sleep(600 if ok else 60)
 
     threading.Thread(target=load_agent, daemon=True).start()
     server.serve_forever()

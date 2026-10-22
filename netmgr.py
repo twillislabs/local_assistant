@@ -1,14 +1,18 @@
 """Wi-Fi, IP and setup-hotspot management through NetworkManager (nmcli).
 
-The arduino user is allowed to change NetworkManager settings via polkit, so none of
-this needs root. Slow operations run on a background thread and report through `job`.
+Works with whatever the machine has: Wi-Fi and/or Ethernet under NetworkManager. Without
+NetworkManager (common on VMs and some PCs) the network is left to the system and the page
+just shows the address. On the UNO Q and Raspberry Pi OS the default user may change
+NetworkManager settings via polkit, so none of this needs root. Slow operations run on a
+background thread and report through `job`.
 """
 import ipaddress
+import shutil
+import socket
 import subprocess
 import threading
 import time
 
-IFACE = "wlan0"
 HOTSPOT = "assistant-hotspot"
 
 
@@ -63,24 +67,65 @@ class NetManager:
 
     # ---- reading ----
 
+    managed = shutil.which("nmcli") is not None
+
+    def devices(self):
+        """[(device, type, state, connection)] for Ethernet and Wi-Fi."""
+        out = []
+        for line in nm("-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "dev").splitlines():
+            dev, typ, state, conn = (split_terse(line) + ["", "", "", ""])[:4]
+            if typ in ("wifi", "ethernet"):
+                out.append((dev, typ, state, conn))
+        return out
+
+    @property
+    def wifi(self):
+        """The Wi-Fi adapter's device name, or None."""
+        if not self.managed:
+            return None
+        return next((d for d, t, _, _ in self.devices() if t == "wifi"), None)
+
+    @staticmethod
+    def _local_address():
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("192.0.2.1", 9))  # no packet is sent; this just picks the outgoing interface
+                return s.getsockname()[0]
+        except OSError:
+            return ""
+
     def status(self):
-        d = props("-f", "GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "dev", "show", IFACE)
-        conn = d.get("GENERAL.CONNECTION", "")
-        st = {
-            "connected": d.get("GENERAL.STATE", "").startswith("100") and conn != HOTSPOT,
-            "hotspot": conn == HOTSPOT,
-            "connection": conn if conn and conn != "--" else "",
-            "state": d.get("GENERAL.STATE", ""),
-            "address": d.get("IP4.ADDRESS", ""),
-            "gateway": d.get("IP4.GATEWAY", ""),
-            "dns": d.get("IP4.DNS", ""),
-            "job": self.job,
-        }
-        if st["connection"] and not st["hotspot"]:
+        if not self.managed:
+            addr = self._local_address()
+            return {"managed": False, "wifi": None, "connected": bool(addr), "hotspot": False, "connection": "",
+                    "address": addr, "gateway": "", "dns": "", "state": "", "job": self.job}
+        devs = self.devices()
+        wifi = next((d for d, t, _, _ in devs if t == "wifi"), None)
+        hotspot = any(c == HOTSPOT for _, _, _, c in devs)
+        # The connection that matters: Ethernet first (it beats Wi-Fi for routing), then Wi-Fi.
+        up = [(d, t, c) for d, t, s, c in sorted(devs, key=lambda x: x[1] != "ethernet")
+              if s == "connected" and c != HOTSPOT]
+        st = {"managed": True, "wifi": wifi, "connected": bool(up), "hotspot": hotspot, "job": self.job,
+              "connection": "", "kind": "", "state": "", "address": "", "gateway": "", "dns": ""}
+        dev = up[0][0] if up else (wifi or (devs[0][0] if devs else None))
+        if dev:
+            d = props("-f", "GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "dev", "show", dev)
+            conn = d.get("GENERAL.CONNECTION", "")
+            st.update(connection=conn if conn and conn not in ("--", HOTSPOT) else "", kind=up[0][1] if up else "",
+                      state=d.get("GENERAL.STATE", ""), address=d.get("IP4.ADDRESS", ""),
+                      gateway=d.get("IP4.GATEWAY", ""), dns=d.get("IP4.DNS", ""))
+        if st["connection"]:
             st["ipv4"] = self.ipv4_of(st["connection"])
         return st
 
+    def _need_wifi(self):
+        wifi = self.wifi
+        if not wifi:
+            raise NmError("this machine has no Wi-Fi adapter managed by NetworkManager")
+        return wifi
+
     def scan(self, rescan=True):
+        self._need_wifi()
         nets = {}
         out = nm("-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "--rescan", "yes" if rescan else "auto", timeout=40)
         for line in out.splitlines():
@@ -96,6 +141,8 @@ class NetManager:
         return sorted(nets.values(), key=lambda n: -n["signal"])
 
     def saved(self):
+        if not self.managed:
+            return []
         out = []
         for line in nm("-t", "-f", "NAME,TYPE,AUTOCONNECT-PRIORITY", "con", "show").splitlines():
             name, typ, prio = (split_terse(line) + ["", "", "0"])[:3]
@@ -159,11 +206,12 @@ class NetManager:
         return ["ipv4.method", "auto", "ipv4.addresses", "", "ipv4.gateway", "", "ipv4.dns", dns]
 
     def _connect(self, ssid, password, hidden, ipv4):
+        wifi = self._need_wifi()
         before = self.status()
         existing = next((s["name"] for s in self.saved() if s["ssid"] == ssid), None)
         name, created = existing or ssid, existing is None
         if created:
-            args = ["con", "add", "type", "wifi", "ifname", IFACE, "con-name", name, "ssid", ssid, "connection.autoconnect", "yes"]
+            args = ["con", "add", "type", "wifi", "ifname", wifi, "con-name", name, "ssid", ssid, "connection.autoconnect", "yes"]
             if password:
                 args += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
             if hidden:
@@ -212,12 +260,13 @@ class NetManager:
         raise NmError("couldn't reach the router with those settings, so the previous settings were restored")
 
     def _start_hotspot(self):
+        wifi = self._need_wifi()
         hs = self.config.get("hotspot")
         try:
             nm("con", "delete", HOTSPOT)
         except NmError:
             pass
-        nm("con", "add", "type", "wifi", "ifname", IFACE, "con-name", HOTSPOT, "connection.autoconnect", "no",
+        nm("con", "add", "type", "wifi", "ifname", wifi, "con-name", HOTSPOT, "connection.autoconnect", "no",
            "ssid", hs["ssid"], "802-11-wireless.mode", "ap", "802-11-wireless.band", "bg", "ipv4.method", "shared",
            "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", hs["password"],
            "wifi-sec.proto", "rsn", "wifi-sec.pairwise", "ccmp", "wifi-sec.group", "ccmp")
@@ -252,7 +301,7 @@ class NetManager:
     def _hotspot_in_use(self):
         if time.time() - self.last_hotspot_request < 180:
             return True
-        out = subprocess.run(["ip", "neigh", "show", "dev", IFACE], capture_output=True, text=True).stdout
+        out = subprocess.run(["ip", "neigh", "show", "dev", self.wifi or "lo"], capture_output=True, text=True).stdout
         return any(s in out for s in ("REACHABLE", "DELAY", "PROBE"))
 
     def watchdog(self):
@@ -265,12 +314,17 @@ class NetManager:
             time.sleep(10)
 
     def _tick(self):
+        if not self.managed or not self.wifi:
+            return  # nothing to do without NetworkManager and a Wi-Fi adapter
         if not self.op.acquire(blocking=False):
             return  # a user-started change is in progress
         try:
             hs, st = self.config.get("hotspot"), self.status()
             if st["connected"]:
                 self.offline_since = None
+                if st["hotspot"] and not self._hotspot_in_use():
+                    # Online another way (e.g. a cable was plugged in): the setup hotspot isn't needed.
+                    self._safe(lambda: (nm("con", "down", HOTSPOT), f"Hotspot off; online via {st['connection']}")[1])
             elif st["hotspot"]:
                 if not hs["enabled"]:
                     self._safe(self._leave_hotspot)

@@ -53,8 +53,15 @@ DEFAULTS = {
 }
 
 INDICATOR_DEFAULTS = {
-    "type": "none",  # none | board (RGB user LED) | mcu (LED on a header pin, dimmable) | gpio | ha (a Home Assistant light)
+    # none | board (Linux LEDs in /sys/class/leds) | mcu (UNO Q header pin, dimmable) | gpio |
+    # ha (a Home Assistant light) | http (call a URL) | command (run a script)
+    "type": "none",
+    "leds": {"red": "red:user", "green": "green:user", "blue": "blue:user"},  # UNO Q's RGB LED; any can be blank
     "mcu": {"pin": 9},  # header pin driven by the microcontroller's agent_led sketch over the Bridge
+    # {state} {brightness} {color} {r} {g} {b} are filled in for http and command.
+    "http": {"method": "POST", "url": "", "headers": {},
+             "body": "{\"state\": \"{state}\", \"brightness\": {brightness}, \"color\": \"{color}\"}"},
+    "command": "",
     "gpio": {"chip": "gpiochip1", "line": 0, "active_low": False},
     "entity": "",
     "states": {
@@ -175,10 +182,39 @@ class Indicator:
 
     def _apply(self, kind, ind, look):
         rgb = self._rgb(look)
+        state = self.want
         if kind == "board":
-            for i, led in enumerate(("red:user", "green:user", "blue:user")):
-                with open(f"/sys/class/leds/{led}/brightness", "w") as f:
-                    f.write("1" if rgb and rgb[i] > 100 else "0")
+            leds = [(i, ind["leds"].get(ch, "")) for i, ch in enumerate(("red", "green", "blue"))]
+            leds = [(i, name) for i, name in leds if name]
+            for i, name in leds:
+                path = f"/sys/class/leds/{name}"
+                # A single LED (e.g. a Pi's ACT LED) is simply on for any colour; RGB mixes channels.
+                on = bool(rgb) if len(leds) == 1 else bool(rgb and rgb[i] > 100)
+                with open(f"{path}/brightness", "w") as f:
+                    f.write(open(f"{path}/max_brightness").read().strip() if on else "0")
+        elif kind in ("http", "command"):
+            r, g, b = rgb or (0, 0, 0)
+            values = {"state": state, "brightness": str(int(look["brightness"]) if rgb else 0),
+                      "color": look["color"] if rgb else "#000000", "r": str(r), "g": str(g), "b": str(b)}
+            if kind == "http":
+                h = ind["http"]
+                if not h["url"]:
+                    return
+                url, body = h["url"], h.get("body") or None
+                for k, v in values.items():
+                    url = url.replace("{" + k + "}", v)
+                    if body:
+                        body = body.replace("{" + k + "}", v)
+                import requests
+                requests.request(h.get("method", "POST"), url, data=body, headers=h.get("headers") or {}, timeout=5).raise_for_status()
+            elif ind["command"].strip():
+                import shlex
+                cmd = ind["command"]
+                for k, v in values.items():
+                    cmd = cmd.replace("{" + k + "}", shlex.quote(v))
+                p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+                if p.returncode:
+                    raise RuntimeError(f"indicator command failed: {(p.stderr or p.stdout).strip()[:200]}")
         elif kind == "mcu":
             import bridge
             # Gamma so "15%" looks dim to the eye rather than nearly full; fade like HAL's eye.
@@ -445,9 +481,14 @@ class Voice:
         c = self.cfg()
         text = " ".join([n for n, _, _ in self.agent.devices] + [a for _, _, ar in self.agent.devices for a in ar])
         text += " " + c["extra_words"] + " " + c["wake_phrase"]
-        # Easter egg phrases must be hearable in fast mode too.
+        # Easter egg phrases and other tools' keywords must be hearable in fast mode too.
         for egg in self.config.data.get("personas", {}).get(c.get("persona"), {}).get("eggs", []):
             text += " " + " ".join(egg.get("phrases", []))
+        for p in list(self.agent.providers.values()):
+            try:
+                text += " " + " ".join(p.keywords()) + " " + " ".join(e[0] for e in p.examples())
+            except Exception:
+                pass
         words = set(COMMAND_WORDS) | set(re.findall(r"[a-z']+", text.lower().replace("’", "'")))
         return sorted(w.strip("'") for w in words if w.strip("'"))
 
@@ -601,6 +642,10 @@ class Voice:
             ev["result"], ev["agent_s"] = result, round(time.time() - t1, 1)
             if result.get("mode") == "chat":
                 ev["reply"] = result["reply"]  # already spoken sentence by sentence
+            elif result.get("mode") == "tool":  # weather, MCP, HTTP or script tools
+                ev["reply"] = result["reply"]
+                if ev["reply"] and not result.get("spoken"):
+                    self.say(ev["reply"])
             elif result.get("mode") == "easter":
                 ev["reply"] = result["reply"]
                 if ev["reply"]:

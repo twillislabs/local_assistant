@@ -1,4 +1,4 @@
-"""Config plus the chat engine: natural language -> Ollama tool call -> Home Assistant MCP.
+"""Config plus the engine: natural language -> Ollama tool call -> Home Assistant or other tools.
 
 The system prompt, examples and tool list are built once per reload and never change
 between requests, so Ollama reuses its prompt cache and each request only pays for the
@@ -15,10 +15,16 @@ import time
 
 import requests
 
+import tools as tools_mod
+
 CONFIG_PATH = os.path.expanduser("~/.config/assistant/config.json")
+HA_ID = "homeassistant"
 
 DEFAULTS = {
     "ui": {"password": "", "port": 0},  # port 0 = 80 if allowed, else 8080
+    # Tool providers the model can use, managed on the Tools page. Home Assistant's own
+    # settings live in "ha"; other providers keep theirs in their entry (see tools.py).
+    "tools": [{"id": HA_ID, "type": "homeassistant", "label": "Home Assistant", "enabled": True}],
     "ha": {
         "url": "http://homeassistant.local:8123",
         "token": "",
@@ -142,73 +148,113 @@ class Agent:
         self.ready = False
         self.error = "not loaded yet"
         self.warm_state = "cold"
-        self.all_tools = []  # every tool HA offers, for the settings page
-        self.tools, self.full_names, self.devices = [], {}, []
+        self.ha = None
+        self.all_tools = []  # every tool HA offers, for the Home Assistant page
+        self.tools, self.routes, self.devices = [], {}, []
+        self.providers, self.status = {}, {}
         self.names, self.areas = {}, {}
         self.system, self.examples = "", []
+        self._signature = None
+        self._history = []
 
     # ---- loading ----
 
-    def reload(self, warm=True):
-        """Rebuild tools, devices and prompt from HA. Safe to call any time; errors are recorded, not raised."""
-        ha_cfg, ol = self.config.get("ha"), self.config.get("ollama")
-        try:
-            if not ha_cfg["token"]:
-                raise RuntimeError("Home Assistant token is not set")
-            ha = HomeAssistant(ha_cfg["url"], ha_cfg["token"])
-            all_tools, tools, full = [], [], {}
-            for t in ha.mcp("tools/list")["tools"]:
-                short = t["name"].split("__")[-1]
-                all_tools.append({"name": short, "description": t.get("description", "")})
-                if short not in ha_cfg["tools"]:
-                    continue
-                schema = copy.deepcopy(t["inputSchema"])
-                # These cost prompt tokens and tiny models fill them with made-up values.
-                for unused in ("device_class", "floor"):
-                    schema.get("properties", {}).pop(unused, None)
-                full[short] = t["name"]
-                tools.append({"type": "function", "function": {"name": short, "description": t.get("description", ""), "parameters": schema}})
-            devices = self._load_devices(ha, set(ha_cfg["domains"]))
-        except Exception as e:
-            with self.lock:
-                self.ready, self.error, self.ha = False, f"{type(e).__name__}: {e}", None
-            return False
+    def _load_ha(self):
+        ha_cfg = self.config.get("ha")
+        if not ha_cfg["token"]:
+            raise RuntimeError("Home Assistant token is not set")
+        ha = HomeAssistant(ha_cfg["url"], ha_cfg["token"])
+        all_tools, tools = [], []
+        for t in ha.mcp("tools/list")["tools"]:
+            short = t["name"].split("__")[-1]
+            all_tools.append({"name": short, "description": t.get("description", "")})
+            if short not in ha_cfg["tools"]:
+                continue
+            schema = copy.deepcopy(t["inputSchema"])
+            # These cost prompt tokens and tiny models fill them with made-up values.
+            for unused in ("device_class", "floor"):
+                schema.get("properties", {}).pop(unused, None)
+            tools.append({"name": short, "full": t["name"], "description": t.get("description", ""), "parameters": schema})
+        return ha, tools, all_tools, self._load_devices(ha, set(ha_cfg["domains"]))
 
-        system = (
-            "You control a smart home by calling tools. Always call exactly one tool. "
-            "Use the device name exactly as listed. Brightness is 0-100. "
-            "If the user names a room instead of a device, use area.\n"
-            + (ol["extra_prompt"].strip() + "\n" if ol["extra_prompt"].strip() else "")
-            + "Rooms: " + ", ".join(sorted({a for _, _, areas in devices for a in areas})) + "\n"
-            + "Devices:\n" + "\n".join(f"- {n} ({d}{', ' + ', '.join(a) if a else ''})" for n, d, a in devices)
-        )
+    def reload(self, warm=True):
+        """Rebuild tools, devices and prompt from every enabled provider. A provider that fails is
+        reported on the Tools page and skipped; the rest still work. Returns True if all loaded."""
+        ol = self.config.get("ollama")
+        tools, routes, status, providers, provider_examples = [], {}, {}, {}, []
+        ha, all_tools, devices = None, [], []
+
+        def add(name, route, description, parameters):
+            if name in routes:  # two providers with the same tool name
+                name = f"{route[0]}_{name}"
+            routes[name] = route
+            tools.append({"type": "function", "function": {"name": name, "description": description, "parameters": parameters}})
+            return name
+
+        for entry in self.config.get("tools"):
+            if not entry.get("enabled", True):
+                continue
+            pid = entry["id"]
+            try:
+                if entry["type"] == "homeassistant":
+                    ha, ha_tools, all_tools, devices = self._load_ha()
+                    for t in ha_tools:
+                        add(t["name"], (pid, t["full"]), t["description"], t["parameters"])
+                    status[pid] = {"ok": True, "message": f"{len(ha_tools)} tools, {len(devices)} devices",
+                                   "tools": [t["name"] for t in ha_tools]}
+                    continue
+                old = self.providers.get(pid)
+                p = old if old is not None and old.cfg == entry else tools_mod.make(entry)
+                renamed = {t["name"]: add(t["name"], (pid, t["name"]), t["description"], t["parameters"]) for t in p.tools()}
+                provider_examples += [[said, renamed[tool], args] for said, tool, args in p.examples() if tool in renamed]
+                providers[pid] = p
+                status[pid] = {"ok": True, "message": f"{len(renamed)} tool{'s' if len(renamed) != 1 else ''}",
+                               "tools": list(renamed)}
+            except Exception as e:
+                status[pid] = {"ok": False, "message": f"{type(e).__name__}: {e}", "tools": []}
+        for pid, old in self.providers.items():  # stop MCP server processes we no longer use
+            if providers.get(pid) is not old and hasattr(old, "close"):
+                old.close()
+
+        system = "You are a helpful assistant that acts by calling tools. Always call exactly one tool.\n"
+        if ha:
+            system += ("To control the home, use the device name exactly as listed. Brightness is 0-100. "
+                       "If the user names a room instead of a device, use area.\n")
+        if ol["extra_prompt"].strip():
+            system += ol["extra_prompt"].strip() + "\n"
+        if ha:
+            system += ("Rooms: " + ", ".join(sorted({a for _, _, areas in devices for a in areas})) + "\n"
+                       + "Devices:\n" + "\n".join(f"- {n} ({d}{', ' + ', '.join(a) if a else ''})" for n, d, a in devices))
         # Worked examples as real chat turns, in the model's own tool-call format.
         examples = []
-        for said, tool, args in ol["examples"]:
+        for said, tool, args in [e for e in ol["examples"] if e[1] in routes] + provider_examples:
             examples += [
                 {"role": "user", "content": said},
                 {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": tool, "arguments": args}}]},
                 {"role": "tool", "content": "done"},
             ]
+        failed = [f"{e.get('label', e['id'])}: {status[e['id']]['message']}" for e in self.config.get("tools")
+                  if e["id"] in status and not status[e["id"]]["ok"]]
+        signature = json.dumps([system, tools, examples], sort_keys=True)
         with self.lock:
-            self.ha, self.all_tools, self.tools, self.full_names, self.devices = ha, all_tools, tools, full, devices
+            self.ha, self.all_tools, self.devices = ha, all_tools, devices
+            self.tools, self.routes, self.providers, self.status = tools, routes, providers, status
             self.names = {n.lower(): n for n, _, _ in devices}
             self.areas = {a.lower(): a for _, _, areas in devices for a in areas}
             self.system, self.examples = system, examples
-            self.ready, self.error, self.warm_state = True, "", "cold"
-        if warm:
+            self.ready = bool(tools)
+            self.error = "; ".join(failed) or ("" if tools else "no tools are installed or working")
+            changed, self._signature = signature != self._signature, signature
+            if changed:
+                self.warm_state = "cold"
+        if warm and changed and tools:  # an unchanged prompt is still cached; don't pay for a warm-up
             threading.Thread(target=self.warm, daemon=True).start()
-        return True
+        return not failed
 
     def refresh_if_changed(self):
-        """Reload (and re-warm) only when HA's exposed devices changed, since a new prompt costs a warm-up."""
-        if not self.ready:
-            return self.reload()
-        try:
-            current = self._load_devices(self.ha, set(self.config.get("ha")["domains"]))
-        except Exception:
-            return False
-        return current != self.devices and self.reload()
+        """Retry failed providers and pick up Home Assistant device changes. The prompt only
+        changes (costing a warm-up) when something actually changed."""
+        return self.reload()
 
     @staticmethod
     def _load_devices(ha, domains):
@@ -312,25 +358,50 @@ class Agent:
         "deactivate", "kill", "shut", "change", "make",
     }
 
-    def is_command(self, text):
-        """Cheap router: home-control phrasing goes to the tool path, everything else is conversation."""
-        words = set(re.findall(r"[a-z']+", text.lower()))
+    def _ha_signal(self, words):
+        """Does this sound like home control?"""
+        if not self.ha:
+            return False
         if words & self.COMMAND_VERBS:
             return True
         known = {w for n in list(self.names) + list(self.areas) for w in re.findall(r"[a-z']+", n)}
-        return bool(words & {"on", "off"}) and bool(words & (known | {"lights", "light", "lamp", "lamps"}))
+        return bool(words & {"on", "off"} and words & (known | {"lights", "light", "lamp", "lamps"}))
+
+    def _matched_providers(self, words):
+        """Non-Home-Assistant providers whose keywords appear in the request."""
+        return [pid for pid, p in list(self.providers.items()) if words & p.keywords()]
+
+    def is_command(self, text):
+        """Cheap router: phrasing for any installed tool goes to the tool path, everything else is conversation."""
+        words = set(re.findall(r"[a-z']+", text.lower()))
+        return self._ha_signal(words) or bool(self._matched_providers(words))
 
     def converse(self, text, on_sentence=None):
         """Short in-character reply, streamed so speech can start after the first sentence."""
         ch = self.config.get("chat")
-        name = self.config.data.get("voice", {}).get("name", "")
         now = time.time()
         if now - getattr(self, "_chat_at", 0) > 300:
             self._history = []  # forget the conversation after 5 quiet minutes
         self._chat_at = now
-        messages = [{"role": "system", "content": ch["prompt"].replace("{name}", name)},
-                    *self._history[-2 * ch["history_turns"]:], {"role": "user", "content": text}]
-        t0, reply, pending, truncated = time.time(), "", "", False
+        t0 = time.time()
+        reply = self._stream_chat([*self._history[-2 * ch["history_turns"]:], {"role": "user", "content": text}], on_sentence)
+        self._history += [{"role": "user", "content": text}, {"role": "assistant", "content": reply}]
+        return {"ok": True, "mode": "chat", "reply": reply, "seconds": round(time.time() - t0, 1)}
+
+    def summarize(self, question, data, on_sentence=None):
+        """Turn a tool's raw result into a short spoken answer, in the active personality's voice."""
+        if not self.config.get("chat")["enabled"]:
+            return data.strip()[:300]
+        return self._stream_chat([{"role": "user", "content":
+            f"Information:\n{data[:1500]}\n\nUsing only the information above, answer this in one or two short "
+            f"spoken sentences: {question}\nIf the information doesn't answer it, say you don't know."}], on_sentence)
+
+    def _stream_chat(self, messages, on_sentence=None):
+        """Stream a reply from the conversation instance, handing each finished sentence to on_sentence."""
+        ch = self.config.get("chat")
+        name = self.config.data.get("voice", {}).get("name", "")
+        messages = [{"role": "system", "content": ch["prompt"].replace("{name}", name)}, *messages]
+        reply, pending, truncated = "", "", False
         with requests.post(f"{ch['url'].rstrip('/')}/api/chat", stream=True, timeout=300, json={
             "model": ch["model"], "stream": True, "think": False, "keep_alive": -1, "messages": messages,
             "options": {"temperature": ch["temperature"], "num_predict": ch["max_tokens"], "num_ctx": 2048},
@@ -359,9 +430,7 @@ class Agent:
             reply = reply[:max(reply.rfind("."), reply.rfind("!"), reply.rfind("?")) + 1] or reply
         elif pending.strip() and on_sentence:
             on_sentence(pending.strip())
-        reply = reply.strip()
-        self._history += [{"role": "user", "content": text}, {"role": "assistant", "content": reply}]
-        return {"ok": True, "mode": "chat", "reply": reply, "seconds": round(time.time() - t0, 1)}
+        return reply.strip()
 
     # ---- easter eggs and grounding ----
 
@@ -406,37 +475,84 @@ class Agent:
             return {"ok": True, "mode": "easter", "reply": egg, "seconds": 0}
         if self.config.get("chat")["enabled"] and not self.is_command(text):
             return self.converse(text, on_sentence)
-        return self.command(text, dry_run)
+        return self.command(text, dry_run, on_sentence)
 
-    def command(self, text, dry_run=False):
+    def _ha_call(self, text, name, full, raw, dry_run):
+        args = self.fix_args(raw, name)
+        entry = {"tool": name, "args": args, "raw_args": raw}
+        if "name" not in args and "area" not in args:
+            room = raw.get("area") or raw.get("name")
+            entry["error"] = (f"no devices exposed to Assist in '{room}'" if room and raw.get("area")
+                              else "couldn't tell which device")
+        elif not self.mentioned(text, args.get("name") or args.get("area")):
+            entry["error"] = "couldn't tell which device"  # the model guessed a target you didn't say
+        elif dry_run:
+            entry["result"] = "(dry run: not sent)"
+        else:
+            res = self.ha.mcp("tools/call", {"name": full, "arguments": args})
+            entry["error"] = res.get("isError", False)
+            entry["result"] = self.ha.text(res)[:500]
+        return entry
+
+    def command(self, text, dry_run=False, on_sentence=None):
         if not self.ready:
-            return {"ok": False, "error": f"agent not ready: {self.error}"}
+            return {"ok": False, "error": f"not ready: {self.error}"}
         with self.lock:
             t0 = time.time()
             msg = self._chat(text)
             llm_s = time.time() - t0
             calls = msg.get("tool_calls") or []
-            if not calls:
-                return {"ok": False, "reply": msg.get("content", "").strip() or "(model returned nothing)", "seconds": round(llm_s, 1)}
-            done = []
-            for c in calls:
-                name, raw = c["function"]["name"], c["function"].get("arguments") or {}
-                args = self.fix_args(raw, name)
-                entry = {"tool": name, "args": args, "raw_args": raw}
-                if name not in self.full_names:
-                    entry["error"] = "unknown tool"
-                elif "name" not in args and "area" not in args:
-                    room = raw.get("area") or raw.get("name")
-                    entry["error"] = (f"no devices exposed to Assist in '{room}'" if room and raw.get("area")
-                                      else "couldn't tell which device")
-                elif not self.mentioned(text, args.get("name") or args.get("area")):
-                    entry["error"] = "couldn't tell which device"  # the model guessed a target you didn't say
-                elif dry_run:
-                    entry["result"] = "(dry run: not sent)"
+            routes, providers = dict(self.routes), dict(self.providers)
+        if not calls:
+            return {"ok": False, "reply": msg.get("content", "").strip() or "(model returned nothing)", "seconds": round(llm_s, 1)}
+        words = set(re.findall(r"[a-z']+", text.lower()))
+        matched, ha_signal = self._matched_providers(words), self._ha_signal(words)
+        done, replies, spoken = [], [], False
+        for c in calls:
+            name, raw = c["function"]["name"], c["function"].get("arguments") or {}
+            route = routes.get(name)
+            # Tool safety check: a small model sometimes picks the wrong tool ("will it rain" -> dice).
+            # Only run a provider's tool if the request mentioned that provider; if exactly one other
+            # provider was mentioned and it has a single tool, use that instead.
+            mentioned = route and (ha_signal if route[0] == HA_ID else route[0] in matched)
+            if route and not mentioned:
+                single = [p for p in matched if len(providers[p].tools()) == 1]
+                if len(matched) == 1 and single:
+                    tool = providers[single[0]].tools()[0]["name"]
+                    name = next((n for n, r in routes.items() if r == (single[0], tool)), tool)
+                    route, raw = (single[0], tool), {}
+                elif route[0] != HA_ID:
+                    done.append({"tool": name, "args": raw, "error": "couldn't tell which tool to use"})
+                    continue
+            if not route:
+                done.append({"tool": name, "args": raw, "error": "unknown tool"})
+            elif route[0] == HA_ID:
+                done.append(self._ha_call(text, name, route[1], raw, dry_run))
+            else:
+                # Another provider: run it, then phrase the result (its own template, or the chat model).
+                provider = providers[route[0]]
+                raw = {**raw, **provider.guess_args(text)}
+                entry = {"tool": name, "args": raw, "provider": route[0]}
+                if dry_run:
+                    entry["result"] = "(dry run: not run)"
                 else:
-                    res = self.ha.mcp("tools/call", {"name": self.full_names[name], "arguments": args})
-                    entry["error"] = res.get("isError", False)
-                    entry["result"] = self.ha.text(res)[:500]
+                    try:
+                        result, failed = provider.call(route[1], raw)
+                    except Exception as e:
+                        result, failed = f"{type(e).__name__}: {e}", True
+                    entry["result"] = result[:500]
+                    if failed:
+                        entry["error"] = result[:200] or "the tool failed"
+                    else:
+                        reply = provider.reply(route[1], raw, result)
+                        if reply is None and len(result) <= 300 and not result.lstrip().startswith(("{", "[", "<")):
+                            reply = result.strip()  # short plain text: say it as is rather than risk a garbled summary
+                        if reply is None:
+                            reply, spoken = self.summarize(text, result, on_sentence), bool(on_sentence)
+                        replies.append(reply)
                 done.append(entry)
-            return {"ok": all(not d.get("error") for d in done), "calls": done,
-                    "seconds": round(time.time() - t0, 1), "llm_seconds": round(llm_s, 1)}
+        out = {"ok": all(not d.get("error") for d in done), "calls": done,
+               "seconds": round(time.time() - t0, 1), "llm_seconds": round(llm_s, 1)}
+        if replies:
+            out.update(mode="tool", reply=" ".join(replies), spoken=spoken)
+        return out

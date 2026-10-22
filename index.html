@@ -77,7 +77,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
     <h1>Assistant</h1>
     <div class="chips">
       <span class="chip" id="c-net"><span class="dot"></span>Network</span>
-      <span class="chip" id="c-ha"><span class="dot"></span>Home Assistant</span>
+      <span class="chip" id="c-ha"><span class="dot"></span>Tools</span>
       <span class="chip" id="c-model"><span class="dot"></span>Model</span>
       <button class="chip" id="c-voice" title="Switch listening on/off" style="border:1px solid var(--border);cursor:pointer;font:inherit;font-size:13px;color:inherit"><span class="dot"></span>Listening</button>
     </div>
@@ -85,9 +85,10 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
   <nav id="nav">
     <button data-tab="chat" class="on">Chat</button>
     <button data-tab="voice">Voice</button>
-    <button data-tab="network">Network</button>
-    <button data-tab="ha">Home Assistant</button>
+    <button data-tab="tools">Tools</button>
+    <button data-tab="ha" id="nav-ha">Home Assistant</button>
     <button data-tab="model">Model</button>
+    <button data-tab="network">Network</button>
     <button data-tab="system">System</button>
   </nav>
 </header>
@@ -234,16 +235,38 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
     </div>
 
     <div class="card">
-      <h2>Indicator light</h2>
-      <p class="hint">An LED or light that shows when it's listening. HAL's eye: dim red at rest, bright when attending.</p>
-      <label>Light</label>
+      <h2>Indicator</h2>
+      <p class="hint">Shows when it's listening, thinking and speaking: an LED, a light, or anything you can reach with a URL or a script. HAL's eye: dim red at rest, bright when attending.</p>
+      <label>Indicator</label>
       <select id="i-type">
         <option value="none">None</option>
-        <option value="board">Board RGB LED (on/off per colour)</option>
-        <option value="mcu">LED on a header pin, dimmable (D2–D13)</option>
-        <option value="gpio">LED on a Linux GPIO line (on/off)</option>
+        <option value="board">Built-in LEDs (on/off per colour)</option>
+        <option value="mcu" data-needs="bridge">LED on a header pin, dimmable (UNO Q, D2–D13)</option>
+        <option value="gpio" data-needs="gpio">LED on a GPIO line (on/off)</option>
         <option value="ha">Home Assistant light (colour + brightness, e.g. a WLED ring)</option>
+        <option value="http">Call a URL on each change</option>
+        <option value="command">Run a script on each change</option>
       </select>
+      <div id="i-board">
+        <div class="row">
+          <div><label>Red (or the only LED)</label><select id="i-led-red"></select></div>
+          <div><label>Green</label><select id="i-led-green"></select></div>
+          <div><label>Blue</label><select id="i-led-blue"></select></div>
+        </div>
+        <p class="hint">LEDs from <code>/sys/class/leds</code>. Ones marked "needs permission" can't be switched by this user (on a Raspberry Pi, add a udev rule or run the root setup).</p>
+      </div>
+      <div id="i-http">
+        <div class="row">
+          <div><label>Method</label><select id="i-http-method"><option>POST</option><option>GET</option><option>PUT</option></select></div>
+          <div style="grid-column: span 2"><label>URL</label><input type="url" id="i-http-url" placeholder="http://192.168.1.50/led?state={state}"></div>
+        </div>
+        <label>Body (optional)</label><textarea id="i-http-body" style="min-height:60px"></textarea>
+        <label>Headers (one per line, <code>Name: value</code>)</label><textarea id="i-http-headers" style="min-height:44px"></textarea>
+      </div>
+      <div id="i-command">
+        <label>Command</label><input type="text" id="i-cmd" placeholder="~/bin/indicator.sh {state} {brightness} {color}">
+      </div>
+      <p class="hint" id="i-vars">In the URL, body or command, <code>{state}</code> (off, idle, listening, thinking, speaking), <code>{brightness}</code> (0–100), <code>{color}</code> (#rrggbb) and <code>{r}</code> <code>{g}</code> <code>{b}</code> are filled in from the personality's light colours.</p>
       <div id="i-mcu">
         <label>Pin</label>
         <select id="i-mcu-pin"></select>
@@ -264,8 +287,97 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
     </div>
   </section>
 
+  <!-- Tools -->
+  <section class="tab" id="t-tools">
+    <div class="card">
+      <h2>Tools</h2>
+      <p class="hint">What the assistant can do besides talk. Requests that mention a tool go to the model with all installed tools; anything else is conversation. Each extra tool makes the cached prompt longer, and a small model does best with a few.</p>
+      <div id="tl-list"></div>
+      <label>Add a tool</label>
+      <div class="composer" style="margin-top:0">
+        <select id="tl-add">
+          <option value="homeassistant">Home Assistant (devices, rooms, media)</option>
+          <option value="weather">Weather (Open-Meteo, no API key)</option>
+          <option value="mcp">MCP server (HTTP or a local command)</option>
+          <option value="http">HTTP API (one tool you describe)</option>
+          <option value="command">Script or command (one tool you describe)</option>
+        </select>
+        <button class="b" id="tl-add-go">Add</button>
+      </div>
+      <span class="msg" id="tl-msg"></span>
+    </div>
+
+    <div class="card" id="tl-editor" hidden>
+      <h2 id="tl-title">Tool</h2>
+      <div class="row">
+        <div><label>Name</label><input type="text" id="tl-label"></div>
+        <div><label class="check" style="margin-top:28px"><input type="checkbox" id="tl-enabled"> Enabled</label></div>
+      </div>
+      <div data-for="weather">
+        <div class="row">
+          <div><label>Location (city)</label><input type="text" id="tl-location" placeholder="Chicago"></div>
+          <div><label>Units</label><select id="tl-units"><option value="celsius">°C, km/h</option><option value="fahrenheit">°F, mph</option></select></div>
+        </div>
+      </div>
+      <div data-for="mcp">
+        <label>Connect by</label>
+        <select id="tl-transport"><option value="http">HTTP URL (streamable HTTP)</option><option value="stdio">Running a command on this machine (stdio)</option></select>
+        <div id="tl-mcp-http"><label>Server URL</label><input type="url" id="tl-mcp-url" placeholder="http://server:8000/mcp"></div>
+        <div id="tl-mcp-stdio"><label>Command</label><input type="text" id="tl-mcp-cmd" placeholder="npx -y @modelcontextprotocol/server-everything"></div>
+      </div>
+      <div data-for="http command">
+        <div class="row">
+          <div><label>Tool name (letters and _)</label><input type="text" id="tl-name" placeholder="get_joke"></div>
+          <div style="grid-column: span 2"><label>What it does (the model reads this)</label><input type="text" id="tl-desc" placeholder="Tells a random joke"></div>
+        </div>
+        <label>Parameters (one per line, <code>name: description</code>)</label>
+        <textarea id="tl-params" style="min-height:50px" placeholder="city: The city to look up"></textarea>
+      </div>
+      <div data-for="http">
+        <div class="row">
+          <div><label>Method</label><select id="tl-method"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select></div>
+          <div style="grid-column: span 2"><label>URL (<code>{parameter}</code> is filled in)</label><input type="url" id="tl-url" placeholder="https://api.example.com/search?q={city}"></div>
+        </div>
+        <label>Body (optional)</label><textarea id="tl-body" style="min-height:50px" placeholder='{"city": "{city}"}'></textarea>
+      </div>
+      <div data-for="mcp http">
+        <label>Headers (one per line, <code>Name: value</code>; saved values show as dots)</label>
+        <textarea id="tl-headers" style="min-height:44px" placeholder="Authorization: Bearer …"></textarea>
+      </div>
+      <div data-for="command">
+        <label>Command (<code>{parameter}</code> is filled in, safely quoted)</label>
+        <input type="text" id="tl-cmd" placeholder="~/bin/lookup.sh {city}">
+        <p class="hint">Runs as this user with a 30-second limit. Anyone who can open this page can set it, so set a UI password.</p>
+      </div>
+      <div data-for="mcp http command">
+        <label>Words that mean "use this tool" (comma separated; tool names count automatically)</label>
+        <input type="text" id="tl-keywords" placeholder="joke, funny">
+        <div class="row">
+          <div><label>Example request (teaches the model)</label><input type="text" id="tl-example" placeholder="tell me a joke"></div>
+          <div><label>Spoken reply (<code>{result}</code>; blank = the chat model sums it up)</label><input type="text" id="tl-reply"></div>
+        </div>
+      </div>
+      <div data-for="mcp" id="tl-mcp-tools-box">
+        <label>Tools to offer the model (none ticked = all)</label>
+        <div class="tools" id="tl-mcp-tools"><p class="hint">Press Test to list the server's tools.</p></div>
+      </div>
+      <div class="btns">
+        <button class="b" id="tl-test">Test</button>
+        <button class="b primary" id="tl-save">Save</button>
+        <button class="b" id="tl-cancel">Cancel</button>
+        <span class="msg" id="tl-edit-msg"></span>
+      </div>
+      <div data-for="weather http command">
+        <label>Try it (arguments as JSON)</label>
+        <div class="composer" style="margin-top:0"><input type="text" id="tl-try-args" value="{}"><button class="b" id="tl-try">Run once</button></div>
+        <pre id="tl-try-out" hidden></pre>
+      </div>
+    </div>
+  </section>
+
   <!-- Network -->
   <section class="tab" id="t-network">
+    <div class="banner" id="net-unmanaged" hidden>This machine's network isn't managed by NetworkManager (common on PCs and VMs), so Wi-Fi and IP settings are left to the system.</div>
     <div class="card">
       <h2>Current connection</h2>
       <div id="net-now" class="hint">Loading…</div>
@@ -282,6 +394,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
       </div>
     </div>
 
+    <div id="net-wifi">
     <div class="card">
       <h2>Join a Wi-Fi network</h2>
       <div class="btns" style="margin-top:0"><button class="b" id="scan">Scan</button><span class="msg" id="scan-msg"></span></div>
@@ -317,10 +430,12 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
         <span class="msg" id="h-msg"></span>
       </div>
     </div>
+    </div>
   </section>
 
   <!-- Home Assistant -->
   <section class="tab" id="t-ha">
+    <div class="banner" id="ha-missing" hidden>Home Assistant isn't installed as a tool. <button class="b" id="ha-install">Install it</button></div>
     <div class="card">
       <h2>Connection</h2>
       <label>Home Assistant URL</label><input type="url" id="ha-url">
@@ -358,8 +473,8 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
         <div><label>Keep model loaded</label><input type="text" id="o-keep" placeholder="-1 = forever, or e.g. 30m"></div>
       </div>
       <label>Extra instructions for the model (optional)</label><textarea id="o-extra" style="min-height:60px"></textarea>
-      <label>Worked examples (JSON: [phrase, tool, arguments])</label><textarea id="o-examples"></textarea>
-      <p class="hint">Examples teach the small model how to call tools. Use your real device names. They're cached after warm-up, so they don't slow down requests.</p>
+      <label>Home Assistant worked examples (JSON: [phrase, tool, arguments])</label><textarea id="o-examples"></textarea>
+      <p class="hint">Examples teach the small model how to call tools. Use your real device names. They're cached after warm-up, so they don't slow down requests. Other tools' examples are set on the Tools page.</p>
       <div class="btns"><button class="b primary" id="o-save">Save &amp; reload</button><span class="msg" id="o-msg"></span></div>
     </div>
     <div class="card">
@@ -449,8 +564,9 @@ $("#nav").onclick = (e) => {
   if (t === "network") { loadSaved(); }
   if (t === "ha") { loadAgent(); }
   if (t === "voice") { loadVoice(); }
+  if (t === "tools") { renderTools(); }
 };
-try { const t = localStorage.getItem("tab"); if (t) document.querySelector(`nav button[data-tab="${t}"]`)?.click(); } catch {}
+// The last-used tab is reopened in init(), once settings have loaded.
 
 // ---- status polling ----
 async function poll() {
@@ -460,7 +576,10 @@ async function poll() {
     if (n.hotspot) chip("#c-net", "warn", "Hotspot on");
     else if (n.connected) chip("#c-net", "ok", `${n.connection} · ${n.address.split("/")[0]}`);
     else chip("#c-net", "bad", "Offline");
-    chip("#c-ha", s.agent.ready ? "ok" : "bad", s.agent.ready ? `HA · ${s.agent.devices} devices` : "HA not connected");
+    const ps = Object.values(s.agent.providers || {}), bad = ps.filter((p) => !p.ok).length;
+    chip("#c-ha", !s.agent.ready ? "bad" : bad ? "warn" : "ok",
+      !ps.length ? "No tools" : `Tools · ${ps.length - bad} ok` + (bad ? ` · ${bad} failing` : "") + (s.agent.ha ? ` · ${s.agent.devices} devices` : ""));
+    if (!document.hidden && $("#t-tools").classList.contains("on")) renderToolStatus(s.agent.providers || {});
     const loaded = s.ollama.loaded.includes(CFG?.ollama.model);
     chip("#c-model", !s.ollama.up ? "bad" : s.agent.warm.startsWith("warm (") && loaded ? "ok" : "warn",
       !s.ollama.up ? "Ollama down" : `${CFG?.ollama.model || ""} · ${loaded ? s.agent.warm : "not loaded"}`);
@@ -486,6 +605,9 @@ async function send(text) {
   try {
     const r = await api("/ask", {text, dry_run: $("#dry").checked, speak: $("#speak").checked});
     if (r.error) { pending.innerHTML = `<span class="msg bad">${esc(r.error)}</span>`; return; }
+    if (r.mode === "tool") {
+      pending.innerHTML = `${esc(r.reply)}<div class="meta">🔧 ${r.calls.map((c) => esc(c.tool)).join(", ")} · ${r.seconds}s</div>`; return;
+    }
     if (r.mode === "chat" || r.mode === "easter") {
       pending.innerHTML = `${esc(r.reply)}<div class="meta">${r.mode === "easter" ? "easter egg 🥚" : `conversation · ${r.seconds}s`}</div>`; return;
     }
@@ -506,8 +628,11 @@ $("#suggest").onclick = (e) => { if (e.target.dataset.say) { $("#say").value = e
 // ---- network ----
 function renderNet(n) {
   const box = $("#net-now");
+  $("#net-unmanaged").hidden = n.managed !== false;
+  $("#net-wifi").hidden = !n.wifi;  // no Wi-Fi adapter (or no NetworkManager): nothing to join, no hotspot
+  if (n.managed === false) { box.textContent = `Address ${n.address || "unknown"}`; $("#ip-form").hidden = true; return; }
   if (n.hotspot) box.innerHTML = `Hotspot <b>${esc(CFG?.hotspot.ssid)}</b> is on at <code>10.42.0.1</code>. Join a network below.`;
-  else if (n.connected) box.innerHTML = `<b>${esc(n.connection)}</b> · ${esc(n.address)} · gateway ${esc(n.gateway)} · DNS ${esc(n.dns || "—")} · ${n.ipv4?.method === "manual" ? "static" : "DHCP"}`;
+  else if (n.connected) box.innerHTML = `<b>${esc(n.connection)}</b> (${n.kind === "ethernet" ? "wired" : "Wi-Fi"}) · ${esc(n.address)} · gateway ${esc(n.gateway)} · DNS ${esc(n.dns || "—")} · ${n.ipv4?.method === "manual" ? "static" : "DHCP"}`;
   else box.textContent = "Not connected.";
   const f = $("#ip-form");
   if (n.connected && n.ipv4 && f.dataset.for !== n.connection) {
@@ -558,11 +683,12 @@ $("#h-save").onclick = () => act($("#h-save"), $("#h-msg"), async () => {
     grace_seconds: +$("#h-grace").value, retry_minutes: +$("#h-retry").value});
   $("#h-pass").value = "";
 });
-$("#h-on").onclick = () => { if (confirm("Start the hotspot now? The board will leave its current Wi-Fi network.")) act($("#h-on"), $("#h-msg"), () => api("/api/hotspot", {on: true}), "Starting…"); };
-$("#h-off").onclick = () => act($("#h-off"), $("#h-msg"), () => api("/api/hotspot", {on: false}), "Reconnecting…");
+$("#h-on").onclick = () => { if (confirm("Start the hotspot now? The board will leave its current Wi-Fi network.")) act($("#h-on"), $("#h-msg"), () => api("/api/hotspot", {on: true}), "Started; progress shows at the top of the page"); };
+$("#h-off").onclick = () => act($("#h-off"), $("#h-msg"), () => api("/api/hotspot", {on: false}), "Reconnecting; progress shows at the top of the page");
 
 // ---- Home Assistant ----
 async function loadAgent() {
+  if (!CFG) return;
   try {
     const a = await api("/api/agent");
     const sel = new Set(CFG.ha.tools);
@@ -596,6 +722,136 @@ $("#ha-save2").onclick = () => saveHa($("#ha-save2"), $("#ha-msg2"), {
 $("#ha-reload").onclick = () => act($("#ha-reload"), $("#ha-msg2"), async () => {
   const r = await api("/api/agent/reload", {}); if (!r.ok) throw new Error(r.error); loadAgent();
 }, "Reloaded; warming the model…");
+
+// ---- tools ----
+const TOOL_TYPES = {homeassistant: "Home Assistant", weather: "Weather", mcp: "MCP server", http: "HTTP API", command: "Script"};
+const TOOL_DEFAULTS = {
+  weather: {label: "Weather", location: "", units: "celsius"},
+  mcp: {label: "MCP server", transport: "http", url: "", command: "", headers: {}, tools: [], keywords: "", example: "", reply: ""},
+  http: {label: "HTTP tool", name: "", description: "", params: [], method: "GET", url: "", body: "", headers: {}, keywords: "", example: "", reply: ""},
+  command: {label: "Script", name: "", description: "", params: [], command: "", keywords: "", example: "", reply: ""},
+};
+let TOOL_EDIT = null;  // the entry being edited (no id = new)
+
+function renderTools() {
+  if (!CFG) return;
+  const st = STATUS?.agent.providers || {};
+  $("#tl-list").innerHTML = CFG.tools.length ? `<table>` + CFG.tools.map((t) => `<tr>
+      <td><b>${esc(t.label || TOOL_TYPES[t.type])}</b><div class="hint" style="margin:0">${TOOL_TYPES[t.type] || t.type}</div></td>
+      <td data-status="${esc(t.id)}">${toolStatusHtml(t, st[t.id])}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <label class="check" style="display:inline-flex;margin:0 8px 0 0"><input type="checkbox" data-enable="${esc(t.id)}" ${t.enabled !== false ? "checked" : ""}> on</label>
+        <button class="b" data-edit="${esc(t.id)}">${t.type === "homeassistant" ? "Settings" : "Edit"}</button>
+        <button class="b danger" data-remove="${esc(t.id)}">Remove</button></td></tr>`).join("") + `</table>`
+    : `<p class="hint">No tools installed: it can only chat. Add one below.</p>`;
+  const haInstalled = CFG.tools.some((t) => t.type === "homeassistant");
+  $("#tl-add").querySelector('option[value="homeassistant"]').hidden = haInstalled;
+  if (haInstalled && $("#tl-add").value === "homeassistant") $("#tl-add").value = "weather";
+  $("#ha-missing").hidden = haInstalled;
+}
+function toolStatusHtml(t, s) {
+  if (t.enabled === false) return `<span class="hint">off</span>`;
+  if (!s) return `<span class="hint">loading…</span>`;
+  return s.ok ? `<span class="msg ok">${esc(s.message)}</span><div class="hint" style="margin:0">${esc(s.tools.join(", "))}</div>`
+              : `<span class="msg bad">${esc(s.message)}</span>`;
+}
+function renderToolStatus(st) {
+  for (const t of CFG.tools) { const cell = document.querySelector(`[data-status="${CSS.escape(t.id)}"]`); if (cell) cell.innerHTML = toolStatusHtml(t, st[t.id]); }
+}
+async function saveTool(entry, msgEl, okText) {
+  const r = await api("/api/tools/save", {tool: entry});
+  CFG = r.config; renderTools(); say(msgEl, okText || "Saved; reloading tools (a changed tool list takes about a minute to warm up)", true);
+  return r.id;
+}
+$("#tl-list").onclick = async (e) => {
+  const id = e.target.dataset.edit || e.target.dataset.remove;
+  if (!id) return;
+  const t = CFG.tools.find((x) => x.id === id);
+  if (e.target.dataset.edit) {
+    if (t.type === "homeassistant") return document.querySelector('nav button[data-tab="ha"]').click();
+    return openTool(t);
+  }
+  if (!confirm(`Remove ${t.label || TOOL_TYPES[t.type]}?` + (t.type === "homeassistant" ? "\n\nIts connection settings are kept, so you can add it back later." : ""))) return;
+  await act(e.target, $("#tl-msg"), async () => { CFG = (await api("/api/tools/delete", {id})).config; renderTools(); }, "Removed");
+  if (TOOL_EDIT?.id === id) $("#tl-editor").hidden = true;
+};
+$("#tl-list").onchange = (e) => {
+  const id = e.target.dataset.enable; if (!id) return;
+  const t = {...CFG.tools.find((x) => x.id === id), enabled: e.target.checked};
+  act(e.target, $("#tl-msg"), () => saveTool(t, $("#tl-msg"), e.target.checked ? "Turned on" : "Turned off"));
+};
+$("#tl-add-go").onclick = () => {
+  const type = $("#tl-add").value;
+  if (type === "homeassistant") {
+    return act($("#tl-add-go"), $("#tl-msg"), async () => {
+      await saveTool({type, label: "Home Assistant", enabled: true}, $("#tl-msg"), "Home Assistant added");
+      document.querySelector('nav button[data-tab="ha"]').click();
+    });
+  }
+  openTool({type, enabled: true, ...JSON.parse(JSON.stringify(TOOL_DEFAULTS[type]))});
+};
+$("#ha-install").onclick = () => act($("#ha-install"), null, () => saveTool({type: "homeassistant", label: "Home Assistant", enabled: true}, $("#ha-msg"), "Installed"));
+
+function openTool(t) {
+  TOOL_EDIT = JSON.parse(JSON.stringify(t));
+  const f = {...TOOL_DEFAULTS[t.type], ...t};
+  $("#tl-editor").hidden = false;
+  $("#tl-title").textContent = (t.id ? "Edit " : "New ") + TOOL_TYPES[t.type];
+  document.querySelectorAll("#tl-editor [data-for]").forEach((el) => { el.hidden = !el.dataset.for.split(" ").includes(t.type); });
+  $("#tl-label").value = f.label || ""; $("#tl-enabled").checked = f.enabled !== false;
+  $("#tl-location").value = f.location || ""; $("#tl-units").value = f.units || "celsius";
+  $("#tl-transport").value = f.transport || "http"; $("#tl-mcp-url").value = f.url || ""; $("#tl-mcp-cmd").value = f.command || "";
+  $("#tl-name").value = f.name || ""; $("#tl-desc").value = f.description || "";
+  $("#tl-params").value = (f.params || []).map((p) => `${p.name}: ${p.description || ""}`).join("\n");
+  $("#tl-method").value = f.method || "GET"; $("#tl-url").value = t.type === "http" ? f.url || "" : ""; $("#tl-body").value = f.body || "";
+  $("#tl-headers").value = headersText(f.headers);
+  $("#tl-cmd").value = t.type === "command" ? f.command || "" : "";
+  $("#tl-keywords").value = f.keywords || ""; $("#tl-example").value = f.example || ""; $("#tl-reply").value = f.reply || "";
+  showMcpTools(f.tools || [], f.tools || []);
+  $("#tl-try-out").hidden = true; $("#tl-edit-msg").textContent = "";
+  showTransport();
+  $("#tl-editor").scrollIntoView({behavior: "smooth", block: "start"});
+}
+function showTransport() { $("#tl-mcp-http").hidden = $("#tl-transport").value !== "http"; $("#tl-mcp-stdio").hidden = $("#tl-transport").value !== "stdio"; }
+$("#tl-transport").onchange = showTransport;
+function showMcpTools(names, ticked) {
+  $("#tl-mcp-tools").innerHTML = names.length ? names.map((n) =>
+    `<label class="check"><input type="checkbox" value="${esc(n)}" ${ticked.includes(n) ? "checked" : ""}> ${esc(n)}</label>`).join("")
+    : `<p class="hint">Press Test to list the server's tools.</p>`;
+}
+function toolValues() {
+  const t = TOOL_EDIT.type, out = {...TOOL_EDIT, label: $("#tl-label").value.trim() || TOOL_TYPES[t], enabled: $("#tl-enabled").checked};
+  const params = $("#tl-params").value.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+    const i = l.indexOf(":"); return i > 0 ? {name: l.slice(0, i).trim(), description: l.slice(i + 1).trim()} : {name: l, description: ""};
+  });
+  const common = {keywords: $("#tl-keywords").value.trim(), example: $("#tl-example").value.trim(), reply: $("#tl-reply").value.trim()};
+  if (t === "weather") Object.assign(out, {location: $("#tl-location").value.trim(), units: $("#tl-units").value});
+  if (t === "mcp") Object.assign(out, common, {transport: $("#tl-transport").value, url: $("#tl-mcp-url").value.trim(),
+    command: $("#tl-mcp-cmd").value.trim(), headers: headersObj($("#tl-headers").value),
+    tools: [...document.querySelectorAll("#tl-mcp-tools input:checked")].map((i) => i.value)});
+  if (t === "http") Object.assign(out, common, {name: $("#tl-name").value.trim(), description: $("#tl-desc").value.trim(), params,
+    method: $("#tl-method").value, url: $("#tl-url").value.trim(), body: $("#tl-body").value, headers: headersObj($("#tl-headers").value)});
+  if (t === "command") Object.assign(out, common, {name: $("#tl-name").value.trim(), description: $("#tl-desc").value.trim(), params,
+    command: $("#tl-cmd").value.trim()});
+  if (["http", "command"].includes(t) && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(out.name)) throw new Error("Give the tool a name made of letters, digits and _");
+  return out;
+}
+$("#tl-test").onclick = () => act($("#tl-test"), $("#tl-edit-msg"), async () => {
+  const r = await api("/api/tools/test", {tool: toolValues()});
+  if (TOOL_EDIT.type === "mcp") showMcpTools(r.tools, [...document.querySelectorAll("#tl-mcp-tools input:checked")].map((i) => i.value));
+  say($("#tl-edit-msg"), `Works: ${r.tools.length} tool${r.tools.length === 1 ? "" : "s"} (${r.tools.join(", ")})`, true);
+});
+$("#tl-try").onclick = () => act($("#tl-try"), $("#tl-edit-msg"), async () => {
+  let args; try { args = JSON.parse($("#tl-try-args").value || "{}"); } catch { throw new Error("Arguments aren't valid JSON"); }
+  const r = await api("/api/tools/test", {tool: toolValues(), args});
+  $("#tl-try-out").hidden = false;
+  $("#tl-try-out").textContent = (r.failed ? "FAILED\n" : "") + r.result + (r.reply ? `\n\nSpoken reply: ${r.reply}` : "\n\n(No reply template: the chat model would sum this up.)");
+}, "Ran");
+$("#tl-save").onclick = () => act($("#tl-save"), $("#tl-edit-msg"), async () => {
+  const id = await saveTool(toolValues(), $("#tl-edit-msg"));
+  TOOL_EDIT = {...CFG.tools.find((t) => t.id === id)}; $("#tl-title").textContent = "Edit " + TOOL_TYPES[TOOL_EDIT.type];
+});
+$("#tl-cancel").onclick = () => { $("#tl-editor").hidden = true; TOOL_EDIT = null; };
 
 // ---- model ----
 function renderChatModels(s) {
@@ -643,6 +899,11 @@ function renderPull(p) {
   $("#pull-msg").textContent = `${p.name}: ${p.status}`;
   $("#pull-bar").style.width = p.total ? (100 * p.completed / p.total).toFixed(0) + "%" : (p.status === "done" ? "100%" : "0");
   if (p.status === "done") setTimeout(() => { $("#pull-box").dataset.seen = p.name; }, 10000);
+  const finished = p.status === "done" || p.status.startsWith("error");
+  if (finished && $("#o-msg").textContent.startsWith("Downloading")) {
+    say($("#o-msg"), p.status === "done" ? `Downloaded ${p.name}` : `${p.name}: ${p.status}`, p.status === "done");
+    $("#o-models").dataset.names = ""; $("#c-models").dataset.names = "";  // refresh the model lists
+  }
 }
 function pull(name) { if (name) act($("#o-pull-go"), $("#o-msg"), () => api("/api/ollama/pull", {name, target: $("#o-pull-target").value}), `Downloading ${name}…`); }
 $("#o-pull-go").onclick = () => pull($("#o-pull").value.trim());
@@ -665,6 +926,7 @@ function renderSys(s) {
     ["Disk free", `${fmtBytes(y.disk_free)} of ${fmtBytes(y.disk_total)}`],
     ["Load", y.load.toFixed(2)],
     ["Ollama", s.ollama.up ? `running · loaded: ${s.ollama.loaded.join(", ") || "nothing"}` : "not reachable"],
+    ...(PLATFORM ? [["Machine", `${PLATFORM.model} · ${PLATFORM.arch}${PLATFORM.virtual ? ` · virtual (${PLATFORM.virtual})` : ""}${PLATFORM.unoq ? " · UNO Q features on" : ""}`]] : []),
   ].map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join("");
   $("#mdns-url").textContent = `http://${y.hostname}.local${location.port ? ":" + location.port : ""}`;
 }
@@ -690,6 +952,7 @@ function fill() {
   $("#c-enabled").checked = c.chat.enabled; $("#c-max").value = c.chat.max_tokens; $("#c-hist").value = c.chat.history_turns;
   if (!$("#ch-model").options.length) $("#ch-model").innerHTML = `<option>${esc(c.chat.model)}</option>`;
   fillVoice();
+  renderTools();
 }
 
 // ---- voice ----
@@ -711,6 +974,17 @@ function fillVoice() {
   $("#v-name").value = v.name;
   $("#i-type").value = ind.type; $("#i-gpio-chip").value = ind.gpio.chip; $("#i-gpio-line").value = ind.gpio.line;
   $("#i-gpio-low").checked = ind.gpio.active_low; $("#i-entity").value = ind.entity; $("#i-mcu-pin").value = ind.mcu?.pin ?? 9;
+  for (const ch of ["red", "green", "blue"]) {
+    const sel = $(`#i-led-${ch}`), cur = ind.leds?.[ch] || "";
+    const leds = PLATFORM?.leds || [];
+    sel.innerHTML = `<option value="">(none)</option>` + leds.map((l) =>
+      `<option value="${esc(l.name)}">${esc(l.name)}${l.writable ? "" : " (needs permission)"}</option>`).join("") +
+      (cur && !leds.some((l) => l.name === cur) ? `<option value="${esc(cur)}">${esc(cur)} (not found)</option>` : "");
+    sel.value = cur;
+  }
+  $("#i-http-method").value = ind.http?.method || "POST"; $("#i-http-url").value = ind.http?.url || "";
+  $("#i-http-body").value = ind.http?.body || ""; $("#i-http-headers").value = headersText(ind.http?.headers);
+  $("#i-cmd").value = ind.command || "";
   showIndicatorFields();
   fillPersonas();
   const base = `http://${location.host}`;
@@ -744,7 +1018,27 @@ rest_command:
     payload: '{"text": "{{ text }}"}'`;
 }
 function showIndicatorFields() {
-  $("#i-gpio").hidden = $("#i-type").value !== "gpio"; $("#i-ha").hidden = $("#i-type").value !== "ha"; $("#i-mcu").hidden = $("#i-type").value !== "mcu";
+  const t = $("#i-type").value;
+  for (const k of ["gpio", "ha", "mcu", "board", "http", "command"]) $(`#i-${k}`).hidden = t !== k;
+  $("#i-vars").hidden = !["http", "command"].includes(t);
+}
+// "Name: value" lines <-> {Name: value}
+function headersText(h) { return Object.entries(h || {}).map(([k, v]) => `${k}: ${v}`).join("\n"); }
+function headersObj(text) {
+  const out = {};
+  for (const line of text.split("\n")) { const i = line.indexOf(":"); if (i > 0) out[line.slice(0, i).trim()] = line.slice(i + 1).trim(); }
+  return out;
+}
+
+// ---- platform: only offer hardware this machine has ----
+let PLATFORM = null;
+function applyPlatform() {
+  if (!PLATFORM) return;
+  document.querySelectorAll("#i-type option[data-needs]").forEach((o) => {
+    o.hidden = !PLATFORM[o.dataset.needs] || (Array.isArray(PLATFORM[o.dataset.needs]) && !PLATFORM[o.dataset.needs].length);
+  });
+  document.querySelector('#i-type option[value="board"]').hidden = !PLATFORM.leds.length;
+  if (!PLATFORM.audio) $("#v-status").textContent = "No audio tools (arecord/aplay) found; install alsa-utils for voice.";
 }
 // Header pins with PWM on the UNO Q (marked ~ on the board).
 $("#i-mcu-pin").innerHTML = [2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((p) => `<option value="${p}">D${p}</option>`).join("");
@@ -752,6 +1046,7 @@ $("#i-type").onchange = showIndicatorFields;
 $("#v-gpio-on").onchange = () => { $("#v-gpio").hidden = !$("#v-gpio-on").checked; };
 
 async function loadVoice() {
+  if (!CFG) return;  // settings not loaded yet; init() reopens the tab afterwards
   try {
     const d = await api("/api/voice/devices");
     const opts = (list, cur) => list.map((x) => `<option value="${esc(x.id)}" ${x.id === cur ? "selected" : ""}>${esc(x.label)}</option>`).join("");
@@ -809,6 +1104,10 @@ function renderVoiceStatus(v) {
   if (dl.name) $("#v-dl-msg").textContent = `${dl.name}: ${dl.status}`;
   if (dl.status === "done" && $("#v-voices").dataset.dl !== dl.name) { $("#v-voices").dataset.dl = dl.name; loadVoices(); }
   if (lastVoiceState === "speaking" && v.state !== "speaking" || lastVoiceState === "thinking" && v.state === "idle") loadEvents();
+  if ($("#v-msg").dataset.watch && v.state === "idle" && lastVoiceState && lastVoiceState !== "idle") {
+    delete $("#v-msg").dataset.watch;
+    say($("#v-msg"), "Finished; see what it heard below", true);
+  }
   lastVoiceState = v.state;
 }
 // Fast mic meter while the Voice tab is open.
@@ -835,7 +1134,10 @@ $("#v-tlearn").onclick = () => act($("#v-tlearn"), $("#v-trig-msg"), async () =>
   say($("#v-trig-msg"), `Learned: ${k.label}`, true);
 });
 $("#v-tkey-clear").onclick = () => saveVoice($("#v-tkey-clear"), $("#v-trig-msg"), {toggle_key: null}, "Button cleared");
-$("#v-listen").onclick = () => act($("#v-listen"), $("#v-msg"), () => api("/api/voice/listen", {source: "web"}), "Listening…");
+$("#v-listen").onclick = () => act($("#v-listen"), $("#v-msg"), async () => {
+  await api("/api/voice/listen", {source: "web"});
+  $("#v-msg").dataset.watch = "1";  // renderVoiceStatus clears this once it's back to waiting
+}, "Listening… speak now");
 $("#v-dev-save").onclick = () => saveVoice($("#v-dev-save"), $("#v-dev-msg"), {mic: $("#v-mic").value, speaker: $("#v-speaker").value}).then(loadVoice);
 $("#v-spk").onchange = () => act($("#v-spk"), $("#v-dev-msg"), () => api("/api/voice/volume", {speaker_volume: +$("#v-spk").value}), "Volume set");
 $("#v-gain").onchange = () => act($("#v-gain"), $("#v-dev-msg"), () => api("/api/voice/volume", {mic_gain: +$("#v-gain").value}), "Gain set");
@@ -844,7 +1146,10 @@ $("#v-test-mic").onclick = () => act($("#v-test-mic"), $("#v-dev-msg"), async ()
   const r = await api("/api/voice/test-mic", {seconds: 3});
   say($("#v-dev-msg"), `Peak ${r.peak}% · heard: "${r.heard || "nothing"}"` + (r.peak > 95 ? " · too loud, lower the gain" : r.peak < 10 ? " · very quiet, raise the gain" : ""), r.peak >= 10);
 });
-$("#v-test-spk").onclick = () => act($("#v-test-spk"), $("#v-dev-msg"), () => api("/api/voice/say", {text: "This is a test of the speaker."}), "Playing…");
+$("#v-test-spk").onclick = () => act($("#v-test-spk"), $("#v-dev-msg"), () => {
+  say($("#v-dev-msg"), "Playing…", true);
+  return api("/api/voice/say", {text: "This is a test of the speaker.", wait: true});
+}, "Done. Didn't hear it? Check the speaker choice and volume.");
 $("#v-learn").onclick = () => act($("#v-learn"), $("#v-trig-msg"), async () => {
   say($("#v-trig-msg"), "Press the button now (10 seconds)…", true);
   const k = await api("/api/voice/learn-key", {}); CFG = await api("/api/config"); fillVoice();
@@ -933,7 +1238,8 @@ $("#p-save").onclick = () => savePersona(false, $("#p-save"));
 $("#p-save-use").onclick = () => savePersona(true, $("#p-save-use"));
 $("#v-name").onchange = () => saveVoice($("#v-name"), $("#p-msg"), {name: $("#v-name").value.trim()}, "Saved");
 $("#v-say-go").onclick = () => act($("#v-say-go"), $("#p-edit-msg"), () => api("/api/voice/say",
-  {text: $("#v-say").value, voice: $("#p-voice").value, speed: +$("#p-speed").value, volume: +$("#p-vol").value}), "Speaking…");
+  {text: $("#v-say").value, voice: $("#p-voice").value, speed: +$("#p-speed").value, volume: +$("#p-vol").value, wait: true}), "Done");
+$("#v-say-go").addEventListener("click", () => say($("#p-edit-msg"), "Speaking… (a voice that isn't loaded takes ~15 s first)", true), true);
 $("#v-cat-go").onclick = () => act($("#v-cat-go"), $("#v-dl-msg"), () => api("/api/voice/download", {key: $("#v-cat").value}), "Downloading…");
 $("#v-url-go").onclick = () => act($("#v-url-go"), $("#v-dl-msg"), () => api("/api/voice/download", {url: $("#v-url").value.trim()}), "Downloading…");
 $("#v-voices").onclick = async (e) => {
@@ -942,6 +1248,10 @@ $("#v-voices").onclick = async (e) => {
 };
 function indicatorValues() {
   return {type: $("#i-type").value, entity: $("#i-entity").value.trim(), mcu: {pin: +$("#i-mcu-pin").value},
+          leds: {red: $("#i-led-red").value, green: $("#i-led-green").value, blue: $("#i-led-blue").value},
+          http: {method: $("#i-http-method").value, url: $("#i-http-url").value.trim(), body: $("#i-http-body").value,
+                 headers: headersObj($("#i-http-headers").value)},
+          command: $("#i-cmd").value.trim(),
           gpio: {chip: $("#i-gpio-chip").value, line: +$("#i-gpio-line").value, active_low: $("#i-gpio-low").checked}};
 }
 $("#i-save").onclick = () => act($("#i-save"), $("#i-msg"), async () => { CFG = await api("/api/config/indicator", indicatorValues()); });
@@ -953,8 +1263,10 @@ $("#i-states").onclick = async (e) => {
   }, `Showing "${s}" for 3 seconds`);
 };
 (async () => {
-  CFG = await api("/api/config"); fill();
-  await poll(); setInterval(() => { if (!document.hidden) poll(); }, 4000);
+  [CFG, PLATFORM] = await Promise.all([api("/api/config"), api("/api/platform").catch(() => null)]);
+  applyPlatform(); fill();
+  await poll();
+  try { const t = localStorage.getItem("tab"); if (t) document.querySelector(`nav button[data-tab="${t}"]`)?.click(); } catch {} setInterval(() => { if (!document.hidden) poll(); }, 4000);
   loadAgent(); loadSaved();
   if (STATUS?.net.hotspot) { document.querySelector('nav button[data-tab="network"]').click(); scan(); }
 })();
