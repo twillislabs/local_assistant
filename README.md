@@ -25,6 +25,8 @@ Speech recognition, the language model and speech synthesis all run locally.
   guesses; those guesses are refused or redirected instead of switching the wrong thing.
 - **Voice mode**: a wake phrase of your choice, or a trigger from a button (any USB key, remote or mic button),
   a GPIO pin, an HTTP call, a script, or Home Assistant. Listening can be switched off completely (the mic is closed).
+- **Learning**: teach it shortcuts ("when I say sit height, set the desk to 25 percent") and facts
+  ("remember that …"); update or forget them by asking, or on the Memory page.
 - **Personalities**: voice, speed, how it talks, its spoken replies, light colours and **easter eggs**
   ("Open the pod bay doors, HAL"). HAL 9000 and a friendly assistant are built in; edit them or make your own.
 - **Indicator**: built-in LEDs, a GPIO LED, a dimmable LED on a UNO Q header pin, any Home Assistant light
@@ -111,6 +113,23 @@ API keys); enter them on the new machine. Importing never blanks secrets the mac
 fully hands-off copy, `./profile.sh export home --with-secrets` writes `profiles/home.secret.json`, which is
 git-ignored. Copy it across yourself and don't commit it. Wi-Fi networks and passwords are stored by
 NetworkManager and are never part of a profile. The System page has the same Export and Import buttons.
+
+## Teaching it
+
+Teach it by talking or typing; manage everything on the **Memory** page.
+
+| Say | What happens |
+|---|---|
+| "When I say sit height, set the office desk to 25 percent" | Learns a **shortcut**. It works out the action now (without doing it) and confirms what it will do. |
+| "Standing also means stand height" | Adds another phrase to an existing shortcut. |
+| "Change sit height to 30 percent" | Changes the shortcut's amount. Re-teaching a phrase also updates it. |
+| "Forget sit height" | Removes a shortcut. |
+| "Remember that my wife's name is Ali" | Remembers a **fact** for conversation. A corrected version replaces it; "forget that …" removes it. |
+| "What have you learned?" | Lists shortcuts and facts. |
+
+Shortcuts run instantly, without the language model, when the phrase is the point of what you say ("sit height",
+"desk to sit height"), not when it just appears in a sentence ("is the standing lamp on?"). Facts are only given
+to the conversation model, so learning never slows commands down. Everything learned is part of settings profiles.
 
 ## Tools
 

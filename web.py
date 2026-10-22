@@ -229,6 +229,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if url.path == "/api/memory":
+                mem = config.get("memory")
+                for sc in mem["shortcuts"]:
+                    sc["does"] = agent.describe(sc)
+                return self._send(200, mem)
             if url.path == "/api/platform":
                 return self._send(200, platform_info())
             if url.path == "/api/tools":
@@ -269,6 +274,35 @@ class Handler(BaseHTTPRequestHandler):
                 if b.get("speak") and not b.get("dry_run"):
                     return self._send(200, voice.respond(b["text"]).get("result", {}))
                 return self._send(200, agent.ask(b["text"], dry_run=bool(b.get("dry_run"))))
+            if path == "/api/memory/learn":
+                ok, reply = agent.learn(b["phrases"], b["command"])
+                return self._send(200 if ok else 400, {"ok": ok, "reply": reply} if ok else {"error": reply})
+            if path == "/api/memory/shortcut":  # change a shortcut's phrases
+                phrases = [p.strip() for p in b["phrases"] if p.strip()]
+                if not phrases:
+                    return self._send(400, {"error": "a shortcut needs at least one phrase"})
+                mem = config.get("memory")
+                agent._remove_phrases(mem, phrases, keep_id=b["id"])
+                for sc in mem["shortcuts"]:
+                    if sc["id"] == b["id"]:
+                        sc["phrases"] = phrases
+                agent._save_memory(mem)
+                return self._send(200, {"ok": True})
+            if path == "/api/memory/delete":
+                mem = config.get("memory")
+                mem["shortcuts"] = [sc for sc in mem["shortcuts"] if sc["id"] != b["id"]]
+                agent._save_memory(mem)
+                return self._send(200, {"ok": True})
+            if path == "/api/memory/facts":
+                mem = config.get("memory")
+                mem["facts"] = [f.strip() for f in b["facts"] if f.strip()][:30]
+                agent._save_memory(mem)
+                return self._send(200, {"ok": True})
+            if path == "/api/memory/run":
+                sc = next((s for s in config.get("memory")["shortcuts"] if s["id"] == b["id"]), None)
+                if not sc:
+                    return self._send(404, {"error": "no such shortcut"})
+                return self._send(200, agent.run_shortcut(sc, sc["phrases"][0], sc["phrases"][0]))
             if path == "/api/profile/import":
                 profile = b["profile"]
                 if not isinstance(profile, dict) or not ({"ollama", "voice", "tools"} & set(profile)):

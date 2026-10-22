@@ -86,6 +86,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
     <button data-tab="chat" class="on">Chat</button>
     <button data-tab="voice">Voice</button>
     <button data-tab="tools">Tools</button>
+    <button data-tab="memory">Memory</button>
     <button data-tab="ha" id="nav-ha">Home Assistant</button>
     <button data-tab="model">Model</button>
     <button data-tab="network">Network</button>
@@ -284,6 +285,30 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
         <button class="b" data-test="thinking">Thinking</button><button class="b" data-test="speaking">Speaking</button>
       </div>
       <div class="btns"><button class="b primary" id="i-save">Save</button><span class="msg" id="i-msg"></span></div>
+    </div>
+  </section>
+
+  <!-- Memory -->
+  <section class="tab" id="t-memory">
+    <div class="card">
+      <h2>Shortcuts it has learned</h2>
+      <p class="hint">Teach by talking or typing in Chat: <i>"When I say sit height, set the office desk to 25 percent"</i>,
+        <i>"Standing also means stand height"</i>, <i>"Change sit height to 30 percent"</i>, <i>"Forget sit height"</i>,
+        <i>"What have you learned?"</i>. A shortcut runs instantly when it's the point of what you say ("sit height",
+        "desk to sit height"), not when the phrase just appears in a sentence.</p>
+      <div id="m-list"></div>
+      <h2 style="margin-top:16px">Teach a shortcut</h2>
+      <div class="row">
+        <div><label>When I say (several phrases: separate with commas)</label><input type="text" id="m-phrases" placeholder="sit height, sitting"></div>
+        <div><label>Do this (said the way you'd ask normally)</label><input type="text" id="m-command" placeholder="set the office desk to 25 percent"></div>
+      </div>
+      <div class="btns"><button class="b primary" id="m-learn">Learn it</button><span class="msg" id="m-msg"></span></div>
+    </div>
+    <div class="card">
+      <h2>Things it remembers</h2>
+      <p class="hint">Facts for conversation, e.g. <i>"Remember that my wife's name is Ali"</i>. Saying a corrected version updates the old one; <i>"Forget that …"</i> removes it. One per line here.</p>
+      <textarea id="m-facts" style="min-height:90px" placeholder="my wife's name is Ali"></textarea>
+      <div class="btns"><button class="b primary" id="m-facts-save">Save</button><span class="msg" id="m-facts-msg"></span></div>
     </div>
   </section>
 
@@ -577,7 +602,48 @@ $("#nav").onclick = (e) => {
   if (t === "ha") { loadAgent(); }
   if (t === "voice") { loadVoice(); }
   if (t === "tools") { renderTools(); }
+  if (t === "memory") { loadMemory(); }
 };
+
+// ---- memory ----
+async function loadMemory() {
+  if (!CFG) return;
+  try {
+    const m = await api("/api/memory");
+    $("#m-list").innerHTML = m.shortcuts.length ? "<table><tr><th>When I say</th><th>It will</th><th></th></tr>" + m.shortcuts.map((s) => `<tr>
+        <td><input type="text" data-phrases="${esc(s.id)}" value="${esc(s.phrases.join(", "))}"></td>
+        <td>${esc(s.does)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="b" data-save="${esc(s.id)}">Save</button>
+          <button class="b" data-run="${esc(s.id)}">Run</button>
+          <button class="b danger" data-del="${esc(s.id)}">Forget</button></td></tr>`).join("") + "</table>"
+      : `<p class="hint">Nothing learned yet.</p>`;
+    if (document.activeElement !== $("#m-facts")) $("#m-facts").value = m.facts.join("\n");
+  } catch (e) { $("#m-list").innerHTML = `<span class="msg bad">${esc(e.message)}</span>`; }
+}
+$("#m-list").onclick = async (e) => {
+  const b = e.target, id = b.dataset.save || b.dataset.run || b.dataset.del;
+  if (!id) return;
+  if (b.dataset.save) {
+    const phrases = document.querySelector(`[data-phrases="${CSS.escape(id)}"]`).value.split(",").map((p) => p.trim()).filter(Boolean);
+    await act(b, $("#m-msg"), () => api("/api/memory/shortcut", {id, phrases}), "Saved");
+  } else if (b.dataset.run) {
+    await act(b, $("#m-msg"), async () => {
+      const r = await api("/api/memory/run", {id});
+      if (!r.ok) throw new Error(r.error || r.calls?.[0]?.error || "it didn't work");
+    }, "Done");
+  } else if (confirm("Forget this shortcut?")) {
+    await act(b, $("#m-msg"), () => api("/api/memory/delete", {id}), "Forgotten");
+  }
+  loadMemory();
+};
+$("#m-learn").onclick = () => act($("#m-learn"), $("#m-msg"), async () => {
+  say($("#m-msg"), "Working out what that does (a few seconds)…", true);
+  const r = await api("/api/memory/learn", {phrases: $("#m-phrases").value.split(","), command: $("#m-command").value});
+  say($("#m-msg"), r.reply, true); $("#m-phrases").value = ""; $("#m-command").value = ""; loadMemory();
+});
+$("#m-facts-save").onclick = () => act($("#m-facts-save"), $("#m-facts-msg"), () =>
+  api("/api/memory/facts", {facts: $("#m-facts").value.split("\n")}), "Saved");
 // The last-used tab is reopened in init(), once settings have loaded.
 
 // ---- status polling ----
@@ -620,8 +686,11 @@ async function send(text) {
     if (r.mode === "tool") {
       pending.innerHTML = `${esc(r.reply)}<div class="meta">🔧 ${r.calls.map((c) => esc(c.tool)).join(", ")} · ${r.seconds}s</div>`; return;
     }
-    if (r.mode === "chat" || r.mode === "easter") {
-      pending.innerHTML = `${esc(r.reply)}<div class="meta">${r.mode === "easter" ? "easter egg 🥚" : `conversation · ${r.seconds}s`}</div>`; return;
+    if (r.mode === "chat" || r.mode === "easter" || r.mode === "learn") {
+      const meta = r.mode === "easter" ? "easter egg 🥚" : r.mode === "learn" ? "memory 🧠" : `conversation · ${r.seconds}s`;
+      pending.innerHTML = `${esc(r.reply)}<div class="meta">${meta}</div>`;
+      if (r.mode === "learn" && $("#t-memory").classList.contains("on")) loadMemory();
+      return;
     }
     if (!r.calls) { pending.innerHTML = `${esc(r.reply)}<div class="meta">no device action · ${r.seconds}s</div>`; return; }
     pending.innerHTML = r.calls.map((c) => {

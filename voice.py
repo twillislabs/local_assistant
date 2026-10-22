@@ -481,9 +481,12 @@ class Voice:
         c = self.cfg()
         text = " ".join([n for n, _, _ in self.agent.devices] + [a for _, _, ar in self.agent.devices for a in ar])
         text += " " + c["extra_words"] + " " + c["wake_phrase"]
-        # Easter egg phrases and other tools' keywords must be hearable in fast mode too.
+        # Easter egg phrases, learned shortcuts and other tools' keywords must be hearable in fast mode too.
         for egg in self.config.data.get("personas", {}).get(c.get("persona"), {}).get("eggs", []):
             text += " " + " ".join(egg.get("phrases", []))
+        for sc in self.config.data.get("memory", {}).get("shortcuts", []):
+            text += " " + " ".join(sc["phrases"])
+        text += " forget change update learned remember"
         for p in list(self.agent.providers.values()):
             try:
                 text += " " + " ".join(p.keywords()) + " " + " ".join(e[0] for e in p.examples())
@@ -646,7 +649,7 @@ class Voice:
                 ev["reply"] = result["reply"]
                 if ev["reply"] and not result.get("spoken"):
                     self.say(ev["reply"])
-            elif result.get("mode") == "easter":
+            elif result.get("mode") in ("easter", "learn"):
                 ev["reply"] = result["reply"]
                 if ev["reply"]:
                     self.say(ev["reply"])
@@ -701,7 +704,9 @@ class Voice:
         if not hybrid:
             return fast
         unknown = raw.split().count("[unk]")
-        if fast and unknown <= 1 and self.agent.is_command(fast):
+        # Teaching ("when I say ...", "remember that ...") names new words, so it needs full English.
+        teaching = bool(set(fast.split()) & {"say", "means", "remember", "forget"})
+        if fast and unknown <= 1 and not teaching and (self.agent.is_command(fast) or self.agent.shortcut_for(fast)[0]):
             cancel.set()  # a command: the fast result is better; stop the slow recognizer
             oq.put(None)
             return fast
@@ -721,7 +726,8 @@ class Voice:
                 a = call["args"]
                 target = a.get("name") or (f"the {a['area']} " + ("lights" if a.get("domain") == ["light"] else "lights and switches") if a.get("area") else "that")
                 verb = TOOL_VERBS.get(call["tool"], "updated")
-                extra = f" to {a['brightness']} percent" if "brightness" in a else f" to {a['color']}" if "color" in a else ""
+                extra = (f" to {a['brightness']} percent" if "brightness" in a else f" to {a['position']} percent"
+                         if "position" in a else f" to {a['color']}" if "color" in a else "")
                 parts.append(f"{verb} {target}{extra}")
             return c["reply_ok"].format(name=c["name"], did=" and ".join(parts) or "done")
         reason = result.get("error") or next((x["error"] for x in result.get("calls", []) if x.get("error") and x["error"] is not True), "") \

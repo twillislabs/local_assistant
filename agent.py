@@ -53,6 +53,8 @@ DEFAULTS = {
             ["pause the tv", "HassMediaPause", {"name": "Living Room TV"}],
         ],
     },
+    # Learned shortcuts ({"id", "phrases", "say", "tool", "args"}) and facts; see Agent.teach.
+    "memory": {"shortcuts": [], "facts": []},
     # Conversation runs on a second Ollama instance so it never evicts the command prompt from cache.
     "chat": {
         "enabled": True,
@@ -72,6 +74,40 @@ DEFAULTS = {
         "retry_minutes": 5,     # while in hotspot mode, how often to retry saved networks
     },
 }
+
+
+_UNITS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                    "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split(), 2)}
+
+
+def spoken_numbers(text):
+    """'set it to twenty five percent' -> 'set it to 25 percent'. Speech recognition spells numbers
+    out, and the small model handles digits much more reliably."""
+    out, value, words = [], None, text.split()
+    for i, w in enumerate(words):
+        lw = w.lower().strip(",.!?")
+        nxt = words[i + 1].lower().strip(",.!?") if i + 1 < len(words) else ""
+        if lw in _UNITS and value is not None and value >= 20 and value % 10 == 0 and _UNITS[lw] < 10:
+            value += _UNITS[lw]  # "twenty" + "five"
+            continue
+        if lw == "hundred" and (value is not None or (out and out[-1].lower() == "a")):
+            if value is None:
+                out.pop()  # "a hundred"
+            value = (value or 1) * 100
+            continue
+        if value is not None:  # anything else ends the number being built
+            out.append(str(value))
+            value = None
+        if lw in _UNITS:
+            value = _UNITS[lw]
+        elif lw in _TENS:
+            value = _TENS[lw]
+        else:
+            out.append(w)
+    if value is not None:
+        out.append(str(value))
+    return " ".join(out)
 
 
 def _merge(base, over):
@@ -152,7 +188,7 @@ class Agent:
         self.all_tools = []  # every tool HA offers, for the Home Assistant page
         self.tools, self.routes, self.devices = [], {}, []
         self.providers, self.status = {}, {}
-        self.names, self.areas = {}, {}
+        self.names, self.areas, self.domains = {}, {}, {}
         self.system, self.examples = "", []
         self._signature = None
         self._history = []
@@ -247,6 +283,7 @@ class Agent:
             self.ha, self.all_tools, self.devices = ha, all_tools, devices
             self.tools, self.routes, self.providers, self.status = tools, routes, providers, status
             self.names = {n.lower(): n for n, _, _ in devices}
+            self.domains = {n.lower(): d for n, d, _ in devices}
             self.areas = {a.lower(): a for _, _, areas in devices for a in areas}
             self.system, self.examples = system, examples
             self.ready = bool(tools)
@@ -407,7 +444,7 @@ class Agent:
         """Stream a reply from the conversation instance, handing each finished sentence to on_sentence."""
         ch = self.config.get("chat")
         name = self.config.data.get("voice", {}).get("name", "")
-        messages = [{"role": "system", "content": ch["prompt"].replace("{name}", name)}, *messages]
+        messages = [{"role": "system", "content": ch["prompt"].replace("{name}", name) + self.facts_prompt()}, *messages]
         reply, pending, truncated = "", "", False
         with requests.post(f"{ch['url'].rstrip('/')}/api/chat", stream=True, timeout=300, json={
             "model": ch["model"], "stream": True, "think": False, "keep_alive": -1, "messages": messages,
@@ -476,16 +513,256 @@ class Agent:
                 return True
         return False
 
+    # ---- memory: learned shortcuts and facts ----
+    #
+    # Shortcuts map phrases ("sit height") to a resolved tool call, run directly without the model.
+    # Facts ("my wife's name is Ali") are given to the conversation model only, so the command
+    # prompt (and its cache) never changes when something is learned.
+
+    # Words that may surround a shortcut phrase without changing what's asked ("set the desk to sit height").
+    FILLER = {"the", "a", "an", "my", "please", "set", "go", "to", "put", "move", "make", "it", "can", "you", "could",
+              "would", "hey", "now", "mode", "position", "into", "switch", "get", "me", "for", "do", "run", "your",
+              "computer", "ok", "okay", "thanks", "thank", "at", "on", "in", "level"}
+    VERBS_FOR_SPLIT = COMMAND_VERBS | {"move", "put", "go", "run", "do", "play", "get", "tell", "check", "what", "is"}
+
+    def _memory(self):
+        return self.config.get("memory")
+
+    def _save_memory(self, mem):
+        with self.config.lock:
+            self.config.data["memory"] = mem
+            self.config.save()
+
+    def describe(self, sc):
+        """A spoken description of a shortcut's action, e.g. 'set Office Desk to 25 percent'."""
+        a, tool = sc.get("args") or {}, sc["tool"]
+        target = a.get("name") or (f"the {a['area']} lights" if a.get("area") else "")
+        if tool == "HassSetPosition" and "position" in a:
+            return f"set {target} to {a['position']} percent"
+        if tool == "HassLightSet":
+            parts = [f"{a['brightness']} percent" if "brightness" in a else "", a.get("color", "")]
+            return f"set {target} to " + " ".join(p for p in parts if p) if any(parts) else f"adjust {target}"
+        if tool == "HassSetVolume" and "volume_level" in a:
+            return f"set the volume of {target} to {a['volume_level']} percent"
+        if tool in ("HassTurnOn", "HassTurnOff"):
+            return f"turn {'on' if tool == 'HassTurnOn' else 'off'} {target}"
+        if sc.get("say"):
+            return sc["say"]
+        return f"run {tool}"
+
+    def shortcut_for(self, text):
+        """The learned shortcut that this request is (only) asking for, if any."""
+        said = self._norm(text).split()
+        wake = set(self._norm(self.config.data.get("voice", {}).get("wake_phrase", "")).split())
+        best = None
+        for sc in self._memory()["shortcuts"]:
+            target = set(self._norm(" ".join(str(v) for k, v in (sc.get("args") or {}).items() if k in ("name", "area"))).split())
+            allowed = self.FILLER | wake | target
+            for phrase in sc["phrases"]:
+                p = self._norm(phrase).split()
+                if not p:
+                    continue
+                n = len(p)
+                for i in range(len(said) - n + 1):
+                    if said[i:i + n] == p and all(w in allowed for w in said[:i] + said[i + n:]):
+                        if not best or n > best[1]:
+                            best = (sc, n, phrase)
+                if not best and difflib.SequenceMatcher(None, " ".join(p), " ".join(said)).ratio() >= 0.9:
+                    best = (sc, n, phrase)  # a slightly misheard phrase on its own
+        return (best[0], best[2]) if best else (None, None)
+
+    def run_shortcut(self, sc, phrase, text, dry_run=False, on_sentence=None):
+        route = self.routes.get(sc["tool"])
+        if not route:
+            return {"ok": False, "error": f"the tool for '{phrase}' ({sc['tool']}) isn't installed"}
+        t0 = time.time()
+        args = dict(sc.get("args") or {})
+        if route[0] == HA_ID:
+            entry = {"tool": sc["tool"], "args": args, "shortcut": phrase}
+            if dry_run:
+                entry["result"] = "(dry run: not sent)"
+            else:
+                res = self.ha.mcp("tools/call", {"name": route[1], "arguments": args})
+                entry["error"] = res.get("isError", False)
+                entry["result"] = self.ha.text(res)[:500]
+            return {"ok": not entry.get("error"), "calls": [entry], "shortcut": phrase, "seconds": round(time.time() - t0, 1)}
+        entry, reply, spoken = self._provider_call(self.providers[route[0]], route, sc["tool"], args, text, dry_run, on_sentence)
+        entry["shortcut"] = phrase
+        out = {"ok": not entry.get("error"), "calls": [entry], "shortcut": phrase, "seconds": round(time.time() - t0, 1)}
+        if reply:
+            out.update(mode="tool", reply=reply, spoken=spoken)
+        return out
+
+    def learn(self, phrases, command_text):
+        """Save (or update) a shortcut from phrases and a command said the normal way. Returns a reply."""
+        phrases = [p.strip(" '\".,") for p in phrases if p.strip(" '\".,")]
+        if not phrases:
+            return False, "I didn't catch the phrase to learn."
+        mem = self._memory()
+        # "standing also means stand height": point new phrases at an existing shortcut.
+        existing, _ = self.shortcut_for(command_text)
+        if existing:
+            for sc in mem["shortcuts"]:
+                if sc["id"] == existing["id"]:
+                    sc["phrases"] += [p for p in phrases if p.lower() not in (x.lower() for x in sc["phrases"])]
+            self._remove_phrases(mem, phrases, keep_id=existing["id"])
+            self._save_memory(mem)
+            return True, f"Got it. '{phrases[0]}' now also means '{existing['phrases'][0]}'."
+        result = self.command(command_text, dry_run=True)
+        call = next((c for c in result.get("calls", []) if not c.get("error")), None)
+        if not call:
+            why = next((c.get("error") for c in result.get("calls", []) if c.get("error")), None) or result.get("error")
+            return False, f"I couldn't work out how to {command_text}" + (f" ({why})" if why else "") + ". Try saying it the way you'd ask me to do it."
+        action = {"say": spoken_numbers(command_text), "tool": call["tool"], "args": call["args"]}
+        # Teaching a phrase it already knows updates that shortcut's action, keeping its other phrases.
+        lower = {p.lower() for p in phrases}
+        sc = next((s for s in mem["shortcuts"] if lower & {p.lower() for p in s["phrases"]}), None)
+        updated = sc is not None
+        if updated:
+            sc.update(action)
+            sc["phrases"] += [p for p in phrases if p.lower() not in (x.lower() for x in sc["phrases"])]
+            self._remove_phrases(mem, phrases, keep_id=sc["id"])
+        else:
+            sc = {"id": f"s{int(time.time() * 1000)}", "phrases": phrases, **action}
+            mem["shortcuts"].append(sc)
+        self._save_memory(mem)
+        return True, f"{'Updated' if updated else 'Got it'}. When you say '{phrases[0]}', I'll {self.describe(sc)}."
+
+    def _remove_phrases(self, mem, phrases, keep_id=None):
+        """Take these phrases off other shortcuts (dropping shortcuts left with none). Returns True if any were taken."""
+        lower, taken = {p.lower() for p in phrases}, False
+        for sc in mem["shortcuts"]:
+            if sc["id"] != keep_id and any(p.lower() in lower for p in sc["phrases"]):
+                sc["phrases"] = [p for p in sc["phrases"] if p.lower() not in lower]
+                taken = True
+        mem["shortcuts"] = [sc for sc in mem["shortcuts"] if sc["phrases"]]
+        return taken
+
+    def set_number(self, sc_id, value):
+        """Change a shortcut's amount ("change sit height to 30 percent")."""
+        mem = self._memory()
+        for sc in mem["shortcuts"]:
+            if sc["id"] == sc_id:
+                key = next((k for k in ("position", "brightness", "volume_level") if k in sc["args"]), None)
+                if not key:
+                    return False, f"'{sc['phrases'][0]}' doesn't have a number to change."
+                sc["args"][key] = value
+                sc["say"] = re.sub(r"\b\d+\b", str(value), sc.get("say", ""), count=1)
+                self._save_memory(mem)
+                return True, f"Updated. '{sc['phrases'][0]}' will now {self.describe(sc)}."
+        return False, "I don't know that shortcut."
+
+    def remember(self, fact):
+        mem = self._memory()
+        fact = fact.strip().rstrip(".")
+        similar = next((f for f in mem["facts"] if difflib.SequenceMatcher(None, f.lower(), fact.lower()).ratio() >= 0.75), None)
+        if similar:
+            mem["facts"][mem["facts"].index(similar)] = fact  # "...name is Alisia" updates "...name is Ali"
+        else:
+            mem["facts"] = (mem["facts"] + [fact])[-30:]
+        self._save_memory(mem)
+        return "Updated. I'll remember that instead." if similar else "Got it, I'll remember that."
+
+    def forget(self, what):
+        what_n = self._norm(what)
+        mem = self._memory()
+        for sc in mem["shortcuts"]:
+            for p in sc["phrases"]:
+                if self._norm(p) == what_n or difflib.SequenceMatcher(None, self._norm(p), what_n).ratio() >= 0.85:
+                    sc["phrases"].remove(p)
+                    mem["shortcuts"] = [s for s in mem["shortcuts"] if s["phrases"]]
+                    self._save_memory(mem)
+                    return f"Done. I've forgotten '{p}'."
+        best = max(mem["facts"], key=lambda f: difflib.SequenceMatcher(None, self._norm(f), what_n).ratio(), default=None)
+        if best and (what_n in self._norm(best) or difflib.SequenceMatcher(None, self._norm(best), what_n).ratio() >= 0.6):
+            mem["facts"].remove(best)
+            self._save_memory(mem)
+            return f"Done. I've forgotten that {best}."
+        return f"I don't have anything learned about {what}."
+
+    def recall(self):
+        mem = self._memory()
+        parts = [f"'{sc['phrases'][0]}'" + (f" (or {', '.join(sc['phrases'][1:])})" if len(sc["phrases"]) > 1 else "")
+                 + f" means {self.describe(sc)}" for sc in mem["shortcuts"]]
+        out = ("I know these shortcuts: " + "; ".join(parts) + ".") if parts else "I haven't learned any shortcuts yet."
+        if mem["facts"]:
+            out += " And I remember that " + "; ".join(mem["facts"]) + "."
+        return out
+
+    def teach(self, text):
+        """Handle 'when I say X, do Y', 'X also means Y', 'change X to 30 percent', 'remember that ...',
+        'forget ...' and 'what have you learned'. Returns a reply, or None if this isn't teaching."""
+        raw = text.strip()
+        t = self._norm(raw)
+        if re.fullmatch(r"(what (have|did) you learn(ed)?|what do you (remember|know)|list (your )?(shortcuts|memories))( so far)?", t):
+            return self.recall()
+        m = re.fullmatch(r"(please )?forget (about )?(that )?(.+)", t)
+        if m:
+            return self.forget(m.group(4))
+        m = re.fullmatch(r"(change|update|make|set) (.+?) (to|at) (\d+|[a-z ]+?)( percent)?", spoken_numbers(t))
+        if m:
+            sc, phrase = self.shortcut_for(m.group(2))
+            if sc and self._norm(phrase) == self._norm(m.group(2)) and m.group(4).isdigit():
+                return self.set_number(sc["id"], int(m.group(4)))[1]
+        m = re.match(r"(?:remember (?:that )?)?(?:when|whenever|if) i say (.+)", raw, re.I)
+        if m:
+            rest = m.group(1)
+            if "," in rest:  # typed: "when I say sit height, set the desk to 25%"
+                phrase, command = rest.split(",", 1)
+            else:  # spoken: split where the command's verb starts
+                words = rest.split()
+                cut = next((i for i, w in enumerate(words) if i > 0 and self._norm(w) in self.VERBS_FOR_SPLIT), None)
+                if cut is None:
+                    return "Tell me what to do too, for example: when I say sit height, set the desk to 25 percent."
+                phrase, command = " ".join(words[:cut]), " ".join(words[cut:])
+            command = re.sub(r"^\s*(then|you should|please|i mean|it means|that means|do|run)\s+", "", command.strip(), flags=re.I)
+            return self.learn([phrase], command)[1]
+        m = re.fullmatch(r"(remember (that )?)?(.+?) (also )?means (.+)", t)
+        if m and (m.group(1) or m.group(4)):
+            return self.learn([m.group(3)], m.group(5))[1]
+        m = re.match(r"remember (?:that )?(.+)", raw, re.I)
+        if m:
+            return self.remember(m.group(1))
+        return None
+
+    def facts_prompt(self):
+        facts = self._memory()["facts"]
+        return ("\nThings the user has told you (\"I\" and \"my\" mean the user):\n" + "\n".join(f"- {f}" for f in facts)) if facts else ""
+
     def ask(self, text, dry_run=False, on_sentence=None):
         egg = self.easter_egg(text)
         if egg is not None:
             return {"ok": True, "mode": "easter", "reply": egg, "seconds": 0}
+        taught = self.teach(text)
+        if taught is not None:
+            return {"ok": True, "mode": "learn", "reply": taught, "seconds": 0}
+        sc, phrase = self.shortcut_for(text)
+        if sc:
+            return self.run_shortcut(sc, phrase, text, dry_run, on_sentence)
         if self.config.get("chat")["enabled"] and not self.is_command(text):
             return self.converse(text, on_sentence)
         return self.command(text, dry_run, on_sentence)
 
+    def _fit_tool(self, name, args):
+        """Small models use the dimmer tool for a desk or blind (and vice versa). Match the tool to the
+        device type: a number means position for covers, brightness for lights, volume for players."""
+        domain = self.domains.get(str(args.get("name", "")).lower())
+        num = next((args[k] for k in ("position", "brightness", "volume_level") if k in args), None)
+        if not domain or num is None:
+            return name, args
+        want = {"cover": ("HassSetPosition", "position"), "valve": ("HassSetPosition", "position"),
+                "light": ("HassLightSet", "brightness"), "media_player": ("HassSetVolume", "volume_level")}.get(domain)
+        if not want or want[0] == name or want[0] not in self.routes or name not in ("HassLightSet", "HassSetPosition", "HassSetVolume"):
+            return name, args
+        fitted = {k: v for k, v in args.items() if k not in ("position", "brightness", "volume_level", "color")}
+        fitted[want[1]] = num
+        return want[0], fitted
+
     def _ha_call(self, text, name, full, raw, dry_run):
         args = self.fix_args(raw, name)
+        fitted, args = self._fit_tool(name, args)
+        if fitted != name:
+            name, full = fitted, self.routes[fitted][1]
         entry = {"tool": name, "args": args, "raw_args": raw}
         if "name" not in args and "area" not in args:
             room = raw.get("area") or raw.get("name")
@@ -504,6 +781,7 @@ class Agent:
     def command(self, text, dry_run=False, on_sentence=None):
         if not self.ready:
             return {"ok": False, "error": f"not ready: {self.error}"}
+        text = spoken_numbers(text)
         with self.lock:
             t0 = time.time()
             msg = self._chat(text)
@@ -547,30 +825,37 @@ class Agent:
             elif route[0] == HA_ID:
                 done.append(self._ha_call(text, name, route[1], raw, dry_run))
             else:
-                # Another provider: run it, then phrase the result (its own template, or the chat model).
                 provider = providers[route[0]]
-                raw = {**raw, **provider.guess_args(text)}
-                entry = {"tool": name, "args": raw, "provider": route[0]}
-                if dry_run:
-                    entry["result"] = "(dry run: not run)"
-                else:
-                    try:
-                        result, failed = provider.call(route[1], raw)
-                    except Exception as e:
-                        result, failed = f"{type(e).__name__}: {e}", True
-                    entry["result"] = result[:500]
-                    if failed:
-                        entry["error"] = result[:200] or "the tool failed"
-                    else:
-                        reply = provider.reply(route[1], raw, result)
-                        if reply is None and len(result) <= 300 and not result.lstrip().startswith(("{", "[", "<")):
-                            reply = result.strip()  # short plain text: say it as is rather than risk a garbled summary
-                        if reply is None:
-                            reply, spoken = self.summarize(text, result, on_sentence), bool(on_sentence)
-                        replies.append(reply)
+                entry, reply, was_spoken = self._provider_call(provider, route, name, {**raw, **provider.guess_args(text)},
+                                                               text, dry_run, on_sentence)
                 done.append(entry)
+                if reply:
+                    replies.append(reply)
+                    spoken = spoken or was_spoken
         out = {"ok": all(not d.get("error") for d in done), "calls": done,
                "seconds": round(time.time() - t0, 1), "llm_seconds": round(llm_s, 1)}
         if replies:
             out.update(mode="tool", reply=" ".join(replies), spoken=spoken)
         return out
+
+    def _provider_call(self, provider, route, name, args, text, dry_run, on_sentence):
+        """Run a non-HA tool and phrase its result (its own template, the text itself, or the chat model).
+        Returns (entry, reply, spoken)."""
+        entry = {"tool": name, "args": args, "provider": route[0]}
+        if dry_run:
+            entry["result"] = "(dry run: not run)"
+            return entry, None, False
+        try:
+            result, failed = provider.call(route[1], args)
+        except Exception as e:
+            result, failed = f"{type(e).__name__}: {e}", True
+        entry["result"] = result[:500]
+        if failed:
+            entry["error"] = result[:200] or "the tool failed"
+            return entry, None, False
+        reply = provider.reply(route[1], args, result)
+        if reply is None and len(result) <= 300 and not result.lstrip().startswith(("{", "[", "<")):
+            reply = result.strip()  # short plain text: say it as is rather than risk a garbled summary
+        if reply is None:
+            return entry, self.summarize(text, result, on_sentence), bool(on_sentence)
+        return entry, reply, False
