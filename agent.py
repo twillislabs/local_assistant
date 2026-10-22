@@ -156,6 +156,7 @@ class Agent:
         self.system, self.examples = "", []
         self._signature = None
         self._history = []
+        self._reload_lock = threading.Lock()
 
     # ---- loading ----
 
@@ -180,6 +181,12 @@ class Agent:
     def reload(self, warm=True):
         """Rebuild tools, devices and prompt from every enabled provider. A provider that fails is
         reported on the Tools page and skipped; the rest still work. Returns True if all loaded."""
+        # One at a time: several quick changes each start a reload, and an older one finishing
+        # last would otherwise put back tools that were just removed.
+        with self._reload_lock:
+            return self._reload(warm)
+
+    def _reload(self, warm):
         ol = self.config.get("ollama")
         tools, routes, status, providers, provider_examples = [], {}, {}, {}, []
         ha, all_tools, devices = None, [], []
