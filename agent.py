@@ -510,10 +510,21 @@ class Agent:
             llm_s = time.time() - t0
             calls = msg.get("tool_calls") or []
             routes, providers = dict(self.routes), dict(self.providers)
-        if not calls:
-            return {"ok": False, "reply": msg.get("content", "").strip() or "(model returned nothing)", "seconds": round(llm_s, 1)}
         words = set(re.findall(r"[a-z']+", text.lower()))
         matched, ha_signal = self._matched_providers(words), self._ha_signal(words)
+        if not calls:
+            # The model answered in text instead of calling a tool. That text is invented (it even
+            # writes fake <tool_response> blocks), so never use it. If the request clearly named one
+            # single-tool provider ("weather"), call it directly; otherwise treat it as conversation.
+            single = [p for p in matched if len(providers[p].tools()) == 1]
+            if len(matched) == 1 and single and not ha_signal:
+                tool = providers[single[0]].tools()[0]["name"]
+                name = next((n for n, r in routes.items() if r == (single[0], tool)), tool)
+                calls = [{"function": {"name": name, "arguments": {}}}]
+            elif self.config.get("chat")["enabled"] and not ha_signal:
+                return self.converse(text, on_sentence)
+            else:
+                return {"ok": False, "calls": [], "error": "couldn't tell what to do", "seconds": round(llm_s, 1)}
         done, replies, spoken = [], [], False
         for c in calls:
             name, raw = c["function"]["name"], c["function"].get("arguments") or {}
