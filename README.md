@@ -120,11 +120,11 @@ Teach it by talking or typing; manage everything on the **Memory** page.
 
 | Say | What happens |
 |---|---|
-| "When I say sit height, set the office desk to 25 percent" | Learns a **shortcut**. It works out the action now (without doing it) and confirms what it will do. |
+| "When I say sit height, set the standing desk to 25 percent" | Learns a **shortcut**. It works out the action now (without doing it) and confirms what it will do. |
 | "Standing also means stand height" | Adds another phrase to an existing shortcut. |
 | "Change sit height to 30 percent" | Changes the shortcut's amount. Re-teaching a phrase also updates it. |
 | "Forget sit height" | Removes a shortcut. |
-| "Remember that my wife's name is Ali" | Remembers a **fact** for conversation. A corrected version replaces it; "forget that …" removes it. |
+| "Remember that my favorite color is green" | Remembers a **fact** for conversation. A corrected version replaces it; "forget that …" removes it. |
 | "What have you learned?" | Lists shortcuts and facts. |
 
 Shortcuts run instantly, without the language model, when the phrase is the point of what you say ("sit height",

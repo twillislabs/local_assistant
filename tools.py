@@ -113,7 +113,7 @@ class Weather(Provider):
                        r"right|now|later|during)\b|[?.!,]|$)")
 
     def _place(self, text):
-        """A place the user named ("weather in Nashville this weekend"), or "" for the configured one."""
+        """A place the user named ("weather in London this weekend"), or "" for the configured one."""
         m = self.PLACE.search(text.lower())
         place = m.group(1).strip() if m else ""
         if not place or place.startswith(("the ", "my ", "our ")) or place in {"here", "town", "the", "home", "general"}:

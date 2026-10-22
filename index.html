@@ -101,7 +101,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
     <div class="card">
       <div id="log"></div>
       <div class="composer">
-        <input type="text" id="say" placeholder="e.g. turn on the office lamp" autocomplete="off">
+        <input type="text" id="say" placeholder="e.g. turn on the desk lamp" autocomplete="off">
         <button class="b primary" id="send">Send</button>
       </div>
       <label class="check"><input type="checkbox" id="dry"> Dry run (show what it would do, don't touch devices)</label>
@@ -171,7 +171,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
         <option value="fast">Fast: commands use your device words; conversation uses full English in parallel</option>
         <option value="open">Open: full English for everything (about 10× slower for commands)</option>
       </select>
-      <label>Extra words to recognise (e.g. how you say device names: "sun lamp", "robo rock")</label><input type="text" id="v-words">
+      <label>Extra words to recognise (e.g. how you say device names: "night light", "air fryer")</label><input type="text" id="v-words">
       <div class="btns"><button class="b primary" id="v-rec-save">Save</button><span class="msg" id="v-rec-msg"></span></div>
     </div>
 
@@ -292,7 +292,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
   <section class="tab" id="t-memory">
     <div class="card">
       <h2>Shortcuts it has learned</h2>
-      <p class="hint">Teach by talking or typing in Chat: <i>"When I say sit height, set the office desk to 25 percent"</i>,
+      <p class="hint">Teach by talking or typing in Chat: <i>"When I say sit height, set the standing desk to 25 percent"</i>,
         <i>"Standing also means stand height"</i>, <i>"Change sit height to 30 percent"</i>, <i>"Forget sit height"</i>,
         <i>"What have you learned?"</i>. A shortcut runs instantly when it's the point of what you say ("sit height",
         "desk to sit height"), not when the phrase just appears in a sentence.</p>
@@ -300,14 +300,14 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
       <h2 style="margin-top:16px">Teach a shortcut</h2>
       <div class="row">
         <div><label>When I say (several phrases: separate with commas)</label><input type="text" id="m-phrases" placeholder="sit height, sitting"></div>
-        <div><label>Do this (said the way you'd ask normally)</label><input type="text" id="m-command" placeholder="set the office desk to 25 percent"></div>
+        <div><label>Do this (said the way you'd ask normally)</label><input type="text" id="m-command" placeholder="set the standing desk to 25 percent"></div>
       </div>
       <div class="btns"><button class="b primary" id="m-learn">Learn it</button><span class="msg" id="m-msg"></span></div>
     </div>
     <div class="card">
       <h2>Things it remembers</h2>
-      <p class="hint">Facts for conversation, e.g. <i>"Remember that my wife's name is Ali"</i>. Saying a corrected version updates the old one; <i>"Forget that …"</i> removes it. One per line here.</p>
-      <textarea id="m-facts" style="min-height:90px" placeholder="my wife's name is Ali"></textarea>
+      <p class="hint">Facts for conversation, e.g. <i>"Remember that my favorite color is green"</i>. Saying a corrected version updates the old one; <i>"Forget that …"</i> removes it. One per line here.</p>
+      <textarea id="m-facts" style="min-height:90px" placeholder="my favorite color is green"></textarea>
       <div class="btns"><button class="b primary" id="m-facts-save">Save</button><span class="msg" id="m-facts-msg"></span></div>
     </div>
   </section>
@@ -340,7 +340,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
       </div>
       <div data-for="weather">
         <div class="row">
-          <div><label>Location (city)</label><input type="text" id="tl-location" placeholder="Chicago"></div>
+          <div><label>Location (city)</label><input type="text" id="tl-location" placeholder="London"></div>
           <div><label>Units</label><select id="tl-units"><option value="celsius">°C, km/h</option><option value="fahrenheit">°F, mph</option></select></div>
         </div>
       </div>
@@ -410,8 +410,8 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
         <label>IP address</label>
         <select id="ip-method"><option value="auto">Automatic (DHCP)</option><option value="manual">Static</option></select>
         <div class="row" id="ip-static">
-          <div><label>Address / prefix</label><input type="text" id="ip-addr" placeholder="192.168.10.50/24"></div>
-          <div><label>Gateway</label><input type="text" id="ip-gw" placeholder="192.168.10.1"></div>
+          <div><label>Address / prefix</label><input type="text" id="ip-addr" placeholder="192.168.1.50/24"></div>
+          <div><label>Gateway</label><input type="text" id="ip-gw" placeholder="192.168.1.1"></div>
         </div>
         <label>DNS servers (optional, comma separated)</label><input type="text" id="ip-dns" placeholder="1.1.1.1, 8.8.8.8">
         <p class="hint">If the board can't reach your router with the new settings, it puts the old ones back after about 30 seconds. With a static address, open the UI at the new address afterwards.</p>
@@ -429,7 +429,7 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
         <div><label>Password</label><input type="password" id="w-pass" placeholder="leave blank for open networks"></div>
       </div>
       <label class="check"><input type="checkbox" id="w-hidden"> Hidden network</label>
-      <p class="hint">If you're connected through the setup hotspot, it switches off while the board tries this network. If it works, reconnect your device to your normal Wi-Fi and open <code id="mdns-url">http://unoq1.local</code>. If it fails, the hotspot comes back in about a minute.</p>
+      <p class="hint">If you're connected through the setup hotspot, it switches off while the board tries this network. If it works, reconnect your device to your normal Wi-Fi and open <code id="mdns-url">http://assistant.local</code>. If it fails, the hotspot comes back in about a minute.</p>
       <div class="btns"><button class="b primary" id="w-connect">Connect</button></div>
     </div>
 

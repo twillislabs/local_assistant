@@ -38,13 +38,13 @@ Runtime state that is not in the repo: `venv/`, `models/` (both made by `install
 
 ## Working on the dev board
 
-The reference install is an Arduino UNO Q reachable as `arduino@192.168.10.218`, repo at `~/assistant`, running as the user service `assistant` on port 80.
+Development happens on a real install (e.g. a UNO Q) with the repo at `~/assistant`, running as the user service `assistant`. Its address and any personal setup details live in `CLAUDE.local.md` (git-ignored); read that if it exists.
 
 ```sh
-# deploy a change and restart
-scp agent.py arduino@192.168.10.218:~/assistant/
-ssh arduino@192.168.10.218 'systemctl --user restart assistant'
-ssh arduino@192.168.10.218 'journalctl --user -u assistant -f'
+# deploy a change and restart (BOARD is the ssh target from CLAUDE.local.md)
+scp agent.py $BOARD:~/assistant/
+ssh $BOARD 'systemctl --user restart assistant'
+ssh $BOARD 'journalctl --user -u assistant -f'
 
 # wait for warm-up, then try requests without touching devices
 curl -s localhost/api/status          # agent.warm becomes "warm (…)"
@@ -53,6 +53,7 @@ curl -s localhost/ask -d '{"text":"turn off the office","dry_run":true}'
 
 - Prefer `dry_run` for Home Assistant commands; real ones switch the user's lights.
 - When passing JSON or commit messages through `ssh '…'`, apostrophes break the quoting. Put multi-line content in a file and `scp` it.
+- **Never hardcode personal details** (people's names, the user's device names, town, network addresses, hostnames, accounts) in code, docs, examples, placeholders or commit messages. Use neutral examples ("Desk Lamp", "London", 192.168.1.x, "my favorite color is green").
 
 ## Checks before committing
 
@@ -74,5 +75,5 @@ A fresh-clone test: clone to `/tmp`, symlink `venv` and `models` from `~/assista
 
 ## Git
 
-- Commit as the user (`twillislabs`). **Do not add `Co-Authored-By: Claude` or any Claude attribution** to commits or PRs.
-- Remote: https://github.com/twillislabs/local_assistant (private). The push token is in `~/.gh_token` on the board, outside the repo. Never print it or store it in git config or remote URLs.
+- Commit as the repository owner (author details are in the board's git config). **Do not add `Co-Authored-By: Claude` or any Claude attribution** to commits or PRs.
+- Push credentials are kept outside the repo (see `CLAUDE.local.md`). Never print them or store them in git config or remote URLs.

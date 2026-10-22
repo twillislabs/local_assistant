@@ -362,7 +362,7 @@ class Agent:
         out = {}
         name, area = args.get("name"), args.get("area")
         # "turn off office": the model may put the room in either slot. A room beats
-        # a fuzzy device match ("office" would otherwise match "Office Lamp").
+        # a fuzzy device match ("office" would otherwise match "Office Light").
         room = None
         if name and str(name).lower() not in self.names:
             room = self._area(name)
@@ -507,7 +507,7 @@ class Agent:
         if not words:
             return True
         for w in words:
-            if w in said or (len(w) > 3 and w in joined):  # "sun lamp" said, "sunlamp" named
+            if w in said or (len(w) > 3 and w in joined):  # "night light" said, "nightlight" named
                 return True
             if len(w) > 3 and difflib.get_close_matches(w, said, n=1, cutoff=0.8):
                 return True
@@ -516,7 +516,7 @@ class Agent:
     # ---- memory: learned shortcuts and facts ----
     #
     # Shortcuts map phrases ("sit height") to a resolved tool call, run directly without the model.
-    # Facts ("my wife's name is Ali") are given to the conversation model only, so the command
+    # Facts ("my favorite color is green") are given to the conversation model only, so the command
     # prompt (and its cache) never changes when something is learned.
 
     # Words that may surround a shortcut phrase without changing what's asked ("set the desk to sit height").
@@ -534,7 +534,7 @@ class Agent:
             self.config.save()
 
     def describe(self, sc):
-        """A spoken description of a shortcut's action, e.g. 'set Office Desk to 25 percent'."""
+        """A spoken description of a shortcut's action, e.g. 'set Standing Desk to 25 percent'."""
         a, tool = sc.get("args") or {}, sc["tool"]
         target = a.get("name") or (f"the {a['area']} lights" if a.get("area") else "")
         if tool == "HassSetPosition" and "position" in a:
@@ -657,7 +657,7 @@ class Agent:
         fact = fact.strip().rstrip(".")
         similar = next((f for f in mem["facts"] if difflib.SequenceMatcher(None, f.lower(), fact.lower()).ratio() >= 0.75), None)
         if similar:
-            mem["facts"][mem["facts"].index(similar)] = fact  # "...name is Alisia" updates "...name is Ali"
+            mem["facts"][mem["facts"].index(similar)] = fact  # "...color is blue" updates "...color is green"
         else:
             mem["facts"] = (mem["facts"] + [fact])[-30:]
         self._save_memory(mem)

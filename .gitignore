@@ -9,6 +9,9 @@ mcu/**/build/
 mcu/**/.cache/
 *.part
 
+# Personal notes for Claude Code (board address, accounts)
+CLAUDE.local.md
+
 # Secrets that must never be committed
 .gh_token
 .ha_token
