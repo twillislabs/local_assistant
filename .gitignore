@@ -8,3 +8,8 @@ __pycache__/
 mcu/**/build/
 mcu/**/.cache/
 *.part
+
+# Secrets that must never be committed
+.gh_token
+.ha_token
+config.json
