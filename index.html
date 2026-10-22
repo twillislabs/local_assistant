@@ -489,10 +489,21 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
   <!-- Model -->
   <section class="tab" id="t-model">
     <div class="card">
-      <h2>Ollama settings</h2>
+      <h2>Model for tools and commands</h2>
+      <p class="hint">Any Ollama server: this machine (<code>http://localhost:11434</code>) or another computer on your network, e.g. a PC with a GPU (<code>http://192.168.1.20:11434</code>; set <code>OLLAMA_HOST=0.0.0.0</code> there).</p>
       <div class="row">
+        <div style="grid-column: span 2"><label>Server</label>
+          <div class="composer" style="margin-top:0"><input type="url" id="o-url"><button class="b" data-test="o">Test</button></div></div>
         <div><label>Model</label><select id="o-model"></select></div>
-        <div><label>Ollama URL</label><input type="url" id="o-url"></div>
+      </div>
+      <div class="msg" id="o-test-msg"></div>
+      <div class="row">
+        <div style="grid-column: span 2"><label>If that server doesn't answer, use (optional)</label>
+          <div class="composer" style="margin-top:0"><input type="url" id="o-fb-url" placeholder="e.g. http://localhost:11434"><button class="b" data-test="o-fb">Test</button></div></div>
+        <div><label>Fallback model</label><select id="o-fb-model"></select></div>
+      </div>
+      <div class="msg" id="o-fb-test-msg"></div>
+      <div class="row">
         <div><label>Temperature</label><input type="number" id="o-temp" step="0.1" min="0" max="2"></div>
         <div><label>Context size (tokens)</label><input type="number" id="o-ctx" step="512" min="1024"></div>
         <div><label>Keep model loaded</label><input type="text" id="o-keep" placeholder="-1 = forever, or e.g. 30m"></div>
@@ -504,10 +515,21 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
     </div>
     <div class="card">
       <h2>Conversation</h2>
-      <p class="hint">Anything that isn't a home command gets a short spoken reply. It runs on a second Ollama instance so chatting never slows down commands.</p>
+      <p class="hint">Anything that isn't for a tool gets a short spoken reply. On this machine it runs on a second Ollama instance (<code>http://127.0.0.1:11436</code>) so chatting never slows down commands. A network server with a GPU can serve both.</p>
       <label class="check"><input type="checkbox" id="c-enabled"> Allow conversation</label>
       <div class="row">
+        <div style="grid-column: span 2"><label>Server</label>
+          <div class="composer" style="margin-top:0"><input type="url" id="c-url"><button class="b" data-test="c">Test</button><button class="b" id="c-same">Same as commands</button></div></div>
         <div><label>Conversation model</label><select id="ch-model"></select></div>
+      </div>
+      <div class="msg" id="c-test-msg"></div>
+      <div class="row">
+        <div style="grid-column: span 2"><label>If that server doesn't answer, use (optional)</label>
+          <div class="composer" style="margin-top:0"><input type="url" id="c-fb-url" placeholder="e.g. http://127.0.0.1:11436"><button class="b" data-test="c-fb">Test</button></div></div>
+        <div><label>Fallback model</label><select id="c-fb-model"></select></div>
+      </div>
+      <div class="msg" id="c-fb-test-msg"></div>
+      <div class="row">
         <div><label>Max reply length (tokens)</label><input type="number" id="c-max" min="20" max="400"></div>
         <div><label>Remember last N exchanges</label><input type="number" id="c-hist" min="0" max="10"></div>
       </div>
@@ -515,20 +537,29 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
       <div class="btns"><button class="b primary" id="c-save">Save</button><span class="msg" id="c-msg"></span></div>
     </div>
     <div class="card">
-      <h2>Installed models</h2>
+      <h2>Models on the commands server <span class="hint" id="o-models-url"></span></h2>
       <table id="o-models"></table>
-      <h2 style="margin-top:14px">Conversation instance models</h2>
+      <h2 style="margin-top:14px">Models on the conversation server <span class="hint" id="c-models-url"></span></h2>
       <table id="c-models"></table>
       <label>Download a model</label>
       <div class="composer" style="margin-top:0">
         <input type="text" id="o-pull" placeholder="e.g. qwen2.5:1.5b">
-        <select id="o-pull-target" style="width:auto"><option value="command">for commands</option><option value="chat">for conversation</option></select>
+        <select id="o-pull-target" style="width:auto">
+          <option value="command">to the commands server</option><option value="chat">to the conversation server</option>
+          <option value="command_fallback">to the commands fallback</option><option value="chat_fallback">to the conversation fallback</option>
+        </select>
         <button class="b" id="o-pull-go">Download</button>
       </div>
       <div class="suggest">
-        <span class="chip" data-pull="qwen2.5:0.5b">qwen2.5:0.5b · 400 MB · fastest</span>
+        <span class="chip" data-pull="qwen2.5:0.5b">qwen2.5:0.5b · 400 MB · fastest on a small board</span>
         <span class="chip" data-pull="qwen2.5:1.5b">qwen2.5:1.5b · 1 GB · more accurate, ~3× slower</span>
         <span class="chip" data-pull="llama3.2:1b">llama3.2:1b · 1.3 GB</span>
+      </div>
+      <p class="hint" style="margin-top:8px">For a network server with a GPU:</p>
+      <div class="suggest" style="margin-top:0">
+        <span class="chip" data-pull="qwen2.5:7b">qwen2.5:7b · 4.7 GB · far better tool use</span>
+        <span class="chip" data-pull="llama3.1:8b">llama3.1:8b · 4.9 GB · good conversation</span>
+        <span class="chip" data-pull="qwen2.5:3b">qwen2.5:3b · 1.9 GB · for smaller GPUs</span>
       </div>
       <div id="pull-box" hidden><div class="msg" id="pull-msg"></div><div class="bar"><div id="pull-bar"></div></div></div>
     </div>
@@ -659,8 +690,10 @@ async function poll() {
       !ps.length ? "No tools" : `Tools · ${ps.length - bad} ok` + (bad ? ` · ${bad} failing` : "") + (s.agent.ha ? ` · ${s.agent.devices} devices` : ""));
     if (!document.hidden && $("#t-tools").classList.contains("on")) renderToolStatus(s.agent.providers || {});
     const loaded = s.ollama.loaded.includes(CFG?.ollama.model);
-    chip("#c-model", !s.ollama.up ? "bad" : s.agent.warm.startsWith("warm (") && loaded ? "ok" : "warn",
-      !s.ollama.up ? "Ollama down" : `${CFG?.ollama.model || ""} · ${loaded ? s.agent.warm : "not loaded"}`);
+    const main = (CFG?.ollama.url || "").replace(/\/$/, ""), onFallback = s.active?.ollama && s.active.ollama !== main;
+    if (onFallback) chip("#c-model", "warn", `Using fallback · ${CFG.ollama.fallback_model || CFG.ollama.model}`);
+    else chip("#c-model", !s.ollama.up ? "bad" : s.agent.warm.startsWith("warm (") && loaded ? "ok" : "warn",
+      !s.ollama.up ? (s.ollama_fallback?.up ? "Model server down · fallback ready" : "Ollama down") : `${CFG?.ollama.model || ""} · ${loaded ? s.agent.warm : "not loaded"}`);
     renderNet(n); renderSys(s); renderModels(s); renderPull(s.pull); renderVoiceStatus(s.voice);
     const j = n.job, jb = $("#job");
     const recent = j.state === "running" || (j.at && Date.now() / 1000 - j.at < 120);
@@ -935,17 +968,47 @@ $("#tl-save").onclick = () => act($("#tl-save"), $("#tl-edit-msg"), async () => 
 $("#tl-cancel").onclick = () => { $("#tl-editor").hidden = true; TOOL_EDIT = null; };
 
 // ---- model ----
+// Fill a model dropdown from a server's list, keeping the saved choice even if that server is unreachable.
+function fillModels(sel, names, cur) {
+  cur = sel.value || cur || "";
+  const all = [...new Set([...(cur ? [cur] : []), ...names])];
+  sel.innerHTML = (sel.id.includes("fb") ? `<option value="">(same as above)</option>` : "") + all.map((n) => `<option>${esc(n)}</option>`).join("");
+  sel.value = cur;
+}
+const TEST_FIELDS = {o: ["#o-url", "#o-model"], "o-fb": ["#o-fb-url", "#o-fb-model"], c: ["#c-url", "#ch-model"], "c-fb": ["#c-fb-url", "#c-fb-model"]};
+document.querySelectorAll("[data-test]").forEach((btn) => {
+  const key = btn.dataset.test;
+  if (!TEST_FIELDS[key]) return;  // indicator "Test" buttons use data-test too
+  btn.onclick = () => {
+    const [urlSel, modelSel] = TEST_FIELDS[key], msg = $(`#${key}-test-msg`);
+    if (!$(urlSel).value.trim()) return say(msg, "Enter a server address first", false);
+    act(btn, msg, async () => {
+      const r = await api("/api/ollama/test", {url: $(urlSel).value});
+      fillModels($(modelSel), r.models.map((m) => m.name));
+      const want = $(modelSel).value, has = r.models.some((m) => m.name === want);
+      say(msg, `Ollama ${r.version || ""} at ${r.url} · ${r.models.length} model${r.models.length === 1 ? "" : "s"} · ${r.ms} ms` +
+        (want && !has ? ` · "${want}" isn't on this server; pick one or download it below` : ""), !want || has);
+    });
+  };
+});
+$("#c-same").onclick = () => {
+  $("#c-url").value = $("#o-url").value;
+  fillModels($("#ch-model"), [...$("#o-model").options].map((o) => o.value), $("#o-model").value);
+  $("#ch-model").value = $("#o-model").value;
+  say($("#c-test-msg"), "Using the commands server; press Save to keep it", true);
+};
+
 function renderChatModels(s) {
   const names = s.chat_ollama.models.map((m) => m.name).join("|");
   if ($("#c-models").dataset.names === names) return;
   $("#c-models").dataset.names = names;
-  $("#c-models").innerHTML = !s.chat_ollama.up ? `<tr><td class="msg bad">Conversation instance not running</td></tr>` :
+  $("#c-models-url").textContent = CFG?.chat.url || "";
+  if (s.chat_fallback) fillModels($("#c-fb-model"), s.chat_fallback.models.map((m) => m.name), CFG?.chat.fallback_model);
+  $("#c-models").innerHTML = !s.chat_ollama.up ? `<tr><td class="msg bad">Conversation server not reachable${s.chat_fallback?.up ? " (the fallback is being used)" : ""}</td></tr>` :
     "<tr><th>Model</th><th>Size</th><th></th></tr>" + s.chat_ollama.models.map((m) =>
     `<tr><td>${esc(m.name)}${m.name === CFG?.chat.model ? " <span class='chip'>in use</span>" : ""}</td><td>${fmtBytes(m.size)}</td>
      <td style="text-align:right">${m.name === CFG?.chat.model ? "" : `<button class="b danger" data-del="${esc(m.name)}" data-target="chat">Delete</button>`}</td></tr>`).join("");
-  const sel = $("#ch-model"), cur = sel.value || CFG?.chat.model;
-  sel.innerHTML = s.chat_ollama.models.map((m) => `<option>${esc(m.name)}</option>`).join("");
-  sel.value = cur;
+  fillModels($("#ch-model"), s.chat_ollama.models.map((m) => m.name), CFG?.chat.model);
 }
 $("#c-models").onclick = async (e) => {
   const name = e.target.dataset.del; if (!name || !confirm(`Delete ${name}?`)) return;
@@ -953,21 +1016,25 @@ $("#c-models").onclick = async (e) => {
 };
 $("#c-save").onclick = () => act($("#c-save"), $("#c-msg"), async () => {
   CFG = await api("/api/config/chat", {enabled: $("#c-enabled").checked, model: $("#ch-model").value,
+    url: $("#c-url").value.trim(), fallback_url: $("#c-fb-url").value.trim(), fallback_model: $("#c-fb-model").value,
     max_tokens: +$("#c-max").value, history_turns: +$("#c-hist").value});
   $("#c-models").dataset.names = "";
 }, "Saved; loading the conversation model…");
 
 function renderModels(s) {
   renderChatModels(s);
+  $("#o-models-url").textContent = CFG?.ollama.url || "";
+  $('#o-pull-target option[value="command_fallback"]').hidden = !CFG?.ollama.fallback_url;
+  $('#o-pull-target option[value="chat_fallback"]').hidden = !CFG?.chat.fallback_url;
+  if (s.ollama_fallback) fillModels($("#o-fb-model"), s.ollama_fallback.models.map((m) => m.name), CFG?.ollama.fallback_model);
   const names = s.ollama.models.map((m) => m.name).join("|");
   if ($("#o-models").dataset.names === names) return;
   $("#o-models").dataset.names = names;
-  $("#o-models").innerHTML = "<tr><th>Model</th><th>Size</th><th></th></tr>" + s.ollama.models.map((m) =>
+  $("#o-models").innerHTML = !s.ollama.up ? `<tr><td class="msg bad">Commands server not reachable${s.ollama_fallback?.up ? " (the fallback is being used)" : ""}</td></tr>` :
+    "<tr><th>Model</th><th>Size</th><th></th></tr>" + s.ollama.models.map((m) =>
     `<tr><td>${esc(m.name)}${m.name === CFG?.ollama.model ? " <span class='chip'>in use</span>" : ""}</td><td>${fmtBytes(m.size)}</td>
      <td style="text-align:right">${m.name === CFG?.ollama.model ? "" : `<button class="b danger" data-del="${esc(m.name)}">Delete</button>`}</td></tr>`).join("");
-  const sel = $("#o-model"), cur = sel.value || CFG?.ollama.model;
-  sel.innerHTML = s.ollama.models.map((m) => `<option>${esc(m.name)}</option>`).join("");
-  sel.value = cur;
+  fillModels($("#o-model"), s.ollama.models.map((m) => m.name), CFG?.ollama.model);
 }
 $("#o-models").onclick = async (e) => {
   const name = e.target.dataset.del; if (!name || !confirm(`Delete ${name}?`)) return;
@@ -992,7 +1059,8 @@ document.querySelectorAll("[data-pull]").forEach((c) => c.onclick = () => { $("#
 $("#o-save").onclick = () => act($("#o-save"), $("#o-msg"), async () => {
   let examples;
   try { examples = JSON.parse($("#o-examples").value); } catch { throw new Error("Examples aren't valid JSON"); }
-  CFG = await api("/api/config/ollama", {model: $("#o-model").value, url: $("#o-url").value, temperature: +$("#o-temp").value,
+  CFG = await api("/api/config/ollama", {model: $("#o-model").value, url: $("#o-url").value.trim(),
+    fallback_url: $("#o-fb-url").value.trim(), fallback_model: $("#o-fb-model").value, temperature: +$("#o-temp").value,
     num_ctx: +$("#o-ctx").value, keep_alive: $("#o-keep").value, extra_prompt: $("#o-extra").value, examples});
   $("#o-models").dataset.names = "";
 }, "Saved; reloading and warming the model (about a minute)…");
@@ -1038,6 +1106,8 @@ function fill() {
   $("#ha-url").value = c.ha.url; $("#ha-token").placeholder = c.ha.token_set ? "•••••• (saved; leave blank to keep)" : "not set";
   $("#ha-domains").value = c.ha.domains.join(", "); $("#ha-area-domains").value = c.ha.area_domains.join(", ");
   $("#o-url").value = c.ollama.url; $("#o-temp").value = c.ollama.temperature; $("#o-ctx").value = c.ollama.num_ctx;
+  $("#o-fb-url").value = c.ollama.fallback_url || ""; $("#c-url").value = c.chat.url; $("#c-fb-url").value = c.chat.fallback_url || "";
+  fillModels($("#o-fb-model"), [], c.ollama.fallback_model); fillModels($("#c-fb-model"), [], c.chat.fallback_model);
   $("#o-keep").value = c.ollama.keep_alive; $("#o-extra").value = c.ollama.extra_prompt;
   $("#o-examples").value = "[\n" + c.ollama.examples.map((e) => "  " + JSON.stringify(e)).join(",\n") + "\n]";
   $("#o-model").innerHTML = `<option>${esc(c.ollama.model)}</option>`; $("#o-model").value = c.ollama.model;

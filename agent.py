@@ -35,8 +35,12 @@ DEFAULTS = {
         "area_domains": ["light", "switch"],
     },
     "ollama": {
+        # Any Ollama server: this machine or another one on the network (e.g. a PC with a GPU).
         "url": "http://localhost:11434",
         "model": "qwen2.5:0.5b",
+        # Optional: used when the server above doesn't answer or lacks the model ("" = none).
+        "fallback_url": "",
+        "fallback_model": "",
         "temperature": 0,
         "num_ctx": 4096,
         "keep_alive": "-1",
@@ -60,6 +64,8 @@ DEFAULTS = {
         "enabled": True,
         "url": "http://127.0.0.1:11436",
         "model": "qwen2.5:0.5b",
+        "fallback_url": "",
+        "fallback_model": "",
         "temperature": 0.7,
         "max_tokens": 60,
         "history_turns": 3,
@@ -193,6 +199,8 @@ class Agent:
         self._signature = None
         self._history = []
         self._reload_lock = threading.Lock()
+        self._down = {}  # Ollama server URL -> time until which it's treated as down
+        self.active = {"ollama": None, "chat": None}  # the server each part last used
 
     # ---- loading ----
 
@@ -319,23 +327,52 @@ class Agent:
 
     # ---- inference ----
 
+    # ---- Ollama servers: a main one (this machine or another on the network) and an optional fallback ----
+
+    def endpoints(self, section):
+        """[(url, model)] to try for "ollama" (commands) or "chat", in order. A main server that just
+        failed is tried after the fallback for a minute, so a switched-off PC doesn't add a delay each time."""
+        cfg = self.config.get(section)
+        main = (cfg["url"].rstrip("/"), cfg["model"])
+        fb_url = (cfg.get("fallback_url") or "").rstrip("/")
+        if not fb_url or fb_url == main[0]:
+            return [main]
+        fallback = (fb_url, cfg.get("fallback_model") or cfg["model"])
+        return [fallback, main] if time.time() < self._down.get(main[0], 0) else [main, fallback]
+
+    def _post(self, section, path, payload, stream=False, timeout=900):
+        """POST to the first server that answers, falling back if the main one is off or lacks the model."""
+        last = None
+        for url, model in self.endpoints(section):
+            try:
+                r = requests.post(f"{url}{path}", json={**payload, "model": model}, stream=stream, timeout=(3, timeout))
+                if r.status_code == 404 or r.status_code >= 500:  # model not on that server, or the server is broken
+                    raise requests.HTTPError(f"{url}: {r.status_code} {r.text[:200]}", response=r)
+                r.raise_for_status()
+                self._down.pop(url, None)
+                self.active[section] = url
+                return r
+            except (requests.ConnectionError, requests.Timeout, requests.HTTPError) as e:
+                self._down[url] = time.time() + 60
+                last = e
+        raise last
+
     def _chat(self, text, **options):
         ol = self.config.get("ollama")
         keep = ol["keep_alive"]
-        r = requests.post(f"{ol['url'].rstrip('/')}/api/chat", json={
-            "model": ol["model"],
+        r = self._post("ollama", "/api/chat", {
             "stream": False,
             "think": False,
             "keep_alive": int(keep) if str(keep).lstrip("-").isdigit() else keep,
             "options": {"temperature": ol["temperature"], "num_ctx": ol["num_ctx"], **options},
             "messages": [{"role": "system", "content": self.system}, *self.examples, {"role": "user", "content": text}],
             "tools": self.tools,
-        }, timeout=900)
-        r.raise_for_status()
+        })
         return r.json()["message"]
 
     def warm(self):
-        """Process the fixed prompt once so later requests hit the cache. Never executes tools."""
+        """Process the fixed prompt once so later requests hit the cache. Never executes tools.
+        With a fallback server, warm both so switching to it is just as fast."""
         if not self.ready:
             return
         self.warm_state = "warming"
@@ -346,6 +383,28 @@ class Agent:
             self.warm_state = f"warm ({time.time() - t0:.0f}s to load)"
         except Exception as e:
             self.warm_state = f"warm-up failed: {e}"
+        for url, model in self.endpoints("ollama"):
+            if url != self.active.get("ollama"):
+                threading.Thread(target=self._warm_one, args=(url, model), daemon=True).start()
+
+    def _warm_one(self, url, model):
+        ol = self.config.get("ollama")
+        try:
+            requests.post(f"{url}/api/chat", timeout=(3, 900), json={
+                "model": model, "stream": False, "think": False, "keep_alive": -1,
+                "options": {"temperature": ol["temperature"], "num_ctx": ol["num_ctx"], "num_predict": 1},
+                "messages": [{"role": "system", "content": self.system}, *self.examples, {"role": "user", "content": "hi"}],
+                "tools": self.tools})
+        except requests.RequestException:
+            pass  # the fallback being off is fine; it's only a spare
+
+    def warm_chat(self):
+        """Load the conversation model(s) so the first chat isn't slow."""
+        for url, model in self.endpoints("chat"):
+            try:
+                requests.post(f"{url}/api/generate", json={"model": model, "keep_alive": -1}, timeout=(3, 300))
+            except requests.RequestException as e:
+                print("chat warm-up:", url, e, flush=True)
 
     def _area(self, text):
         """The room a phrase refers to, if any ('the office' -> 'Office')."""
@@ -446,11 +505,10 @@ class Agent:
         name = self.config.data.get("voice", {}).get("name", "")
         messages = [{"role": "system", "content": ch["prompt"].replace("{name}", name) + self.facts_prompt()}, *messages]
         reply, pending, truncated = "", "", False
-        with requests.post(f"{ch['url'].rstrip('/')}/api/chat", stream=True, timeout=300, json={
-            "model": ch["model"], "stream": True, "think": False, "keep_alive": -1, "messages": messages,
+        with self._post("chat", "/api/chat", {
+            "stream": True, "think": False, "keep_alive": -1, "messages": messages,
             "options": {"temperature": ch["temperature"], "num_predict": ch["max_tokens"], "num_ctx": 2048},
-        }) as r:
-            r.raise_for_status()
+        }, stream=True, timeout=300) as r:
             for line in r.iter_lines():
                 if not line:
                     continue

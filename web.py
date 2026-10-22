@@ -87,26 +87,46 @@ def platform_info():
     }
 
 
+# Ollama server targets: the main and fallback server for commands ("ollama") and conversation ("chat").
+TARGETS = {"command": ("ollama", "url", "model"), "chat": ("chat", "url", "model"),
+           "command_fallback": ("ollama", "fallback_url", "fallback_model"),
+           "chat_fallback": ("chat", "fallback_url", "fallback_model")}
+
+
 def ollama_url(target="command"):
-    return config.get("chat" if target == "chat" else "ollama")["url"].rstrip("/")
+    section, key, _ = TARGETS[target]
+    return (config.get(section).get(key) or "").rstrip("/")
+
+
+_info_cache = {}
+
+
+def server_info(url):
+    """Models on an Ollama server and which are loaded. Cached briefly, with short timeouts, so a
+    switched-off network server can't slow down the status the page polls every few seconds."""
+    if not url:
+        return {"up": False, "error": "not set", "models": [], "loaded": []}
+    hit = _info_cache.get(url)
+    if hit and time.time() - hit[0] < 10:
+        return hit[1]
+    try:
+        t0 = time.time()
+        tags = requests.get(f"{url}/api/tags", timeout=2).json().get("models", [])
+        ps = requests.get(f"{url}/api/ps", timeout=2).json().get("models", [])
+        info = {"up": True, "ms": round((time.time() - t0) * 1000), "url": url,
+                "models": [{"name": m["name"], "size": m["size"]} for m in tags], "loaded": [m["name"] for m in ps]}
+    except Exception as e:
+        info = {"up": False, "error": str(e)[:200], "url": url, "models": [], "loaded": []}
+    _info_cache[url] = (time.time(), info)
+    return info
 
 
 def ollama_info(target="command"):
-    try:
-        tags = requests.get(f"{ollama_url(target)}/api/tags", timeout=5).json().get("models", [])
-        ps = requests.get(f"{ollama_url(target)}/api/ps", timeout=5).json().get("models", [])
-        return {"up": True, "models": [{"name": m["name"], "size": m["size"]} for m in tags], "loaded": [m["name"] for m in ps]}
-    except Exception as e:
-        return {"up": False, "error": str(e), "models": [], "loaded": []}
+    return server_info(ollama_url(target))
 
 
 def warm_chat():
-    """Load the conversation model so the first chat isn't slow."""
-    ch = config.get("chat")
-    try:
-        requests.post(f"{ch['url'].rstrip('/')}/api/generate", json={"model": ch["model"], "keep_alive": -1}, timeout=300)
-    except Exception as e:
-        print("chat warm-up:", e, flush=True)
+    agent.warm_chat()
 
 
 def pull_model(name, target="command"):
@@ -120,6 +140,7 @@ def pull_model(name, target="command"):
                         raise RuntimeError(d["error"])
                     pull_state.update(status=d.get("status", ""), completed=d.get("completed", pull_state["completed"]), total=d.get("total", pull_state["total"]))
         pull_state["status"] = "done"
+        _info_cache.pop(ollama_url(target), None)  # show the new model straight away
     except Exception as e:
         pull_state["status"] = f"error: {e}"
 
@@ -211,6 +232,9 @@ class Handler(BaseHTTPRequestHandler):
                               "ha": agent.ha is not None, "providers": agent.status},
                     "ollama": ollama_info(),
                     "chat_ollama": ollama_info("chat"),
+                    "ollama_fallback": ollama_info("command_fallback") if ollama_url("command_fallback") else None,
+                    "chat_fallback": ollama_info("chat_fallback") if ollama_url("chat_fallback") else None,
+                    "active": agent.active,
                     "pull": pull_state,
                     "voice": {"state": voice.state, "error": voice.error, "level": round(voice.level, 3),
                               "download": voice.download, "note": getattr(voice, "state_note", ""),
@@ -474,14 +498,31 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/ollama/pull":
                 if pull_state["status"] not in ("", "done") and not pull_state["status"].startswith("error"):
                     return self._send(409, {"error": f"already pulling {pull_state['name']}"})
+                if b.get("target", "command") not in TARGETS or not ollama_url(b.get("target", "command")):
+                    return self._send(400, {"error": "that server isn't set up"})
                 threading.Thread(target=pull_model, args=(b["name"], b.get("target", "command")), daemon=True).start()
                 return self._send(200, {"ok": True})
             if path == "/api/ollama/delete":
                 target = b.get("target", "command")
-                if b["name"] == config.get("chat" if target == "chat" else "ollama")["model"]:
+                section, key, model_key = TARGETS[target]
+                if b["name"] == config.get(section).get(model_key):
                     return self._send(400, {"error": "that model is in use; pick another one first"})
                 r = requests.delete(f"{ollama_url(target)}/api/delete", json={"name": b["name"]}, timeout=30)
+                _info_cache.pop(ollama_url(target), None)
                 return self._send(200 if r.ok else 500, {"ok": r.ok, "error": r.text})
+            if path == "/api/ollama/test":  # check a server before using it
+                url = b["url"].strip().rstrip("/")
+                if not re.match(r"^https?://", url):
+                    url = "http://" + url
+                _info_cache.pop(url, None)
+                info = server_info(url)
+                if not info["up"]:
+                    return self._send(400, {"error": f"no Ollama at {url}: {info['error']}"})
+                try:
+                    info["version"] = requests.get(f"{url}/api/version", timeout=2).json().get("version", "")
+                except Exception:
+                    info["version"] = ""
+                return self._send(200, info)
             if path == "/api/system/restart":
                 run_later(["systemctl", "--user", "restart", "assistant"])
                 return self._send(200, {"ok": True})

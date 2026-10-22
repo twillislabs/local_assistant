@@ -25,6 +25,8 @@ Speech recognition, the language model and speech synthesis all run locally.
   guesses; those guesses are refused or redirected instead of switching the wrong thing.
 - **Voice mode**: a wake phrase of your choice, or a trigger from a button (any USB key, remote or mic button),
   a GPIO pin, an HTTP call, a script, or Home Assistant. Listening can be switched off completely (the mic is closed).
+- **Local or network models**: run the language models on this machine or on an Ollama server elsewhere on your
+  network (e.g. a GPU PC), with automatic fallback.
 - **Learning**: teach it shortcuts ("when I say sit height, set the desk to 25 percent") and facts
   ("remember that …"); update or forget them by asking, or on the Memory page.
 - **Personalities**: voice, speed, how it talks, its spoken replies, light colours and **easter eggs**
@@ -113,6 +115,20 @@ API keys); enter them on the new machine. Importing never blanks secrets the mac
 fully hands-off copy, `./profile.sh export home --with-secrets` writes `profiles/home.secret.json`, which is
 git-ignored. Copy it across yourself and don't commit it. Wi-Fi networks and passwords are stored by
 NetworkManager and are never part of a profile. The System page has the same Export and Import buttons.
+
+## Using an Ollama server on your network
+
+The language models can run on another computer, such as a PC with a GPU, instead of this machine. On a small board
+that's the biggest possible speed-up: commands go from about 4 seconds to under one, and you can use a 7–8B model
+(e.g. `qwen2.5:7b`), which picks tools and plays personalities far better. Speech recognition and the voice still
+run locally.
+
+1. On the server, install Ollama and let it accept network connections (`OLLAMA_HOST=0.0.0.0`).
+2. On the **Model** page, enter its address (e.g. `http://192.168.1.20:11434`) as the server for commands and/or
+   conversation, press **Test**, pick a model (or download one to it from the same page) and save.
+3. Optionally set a **fallback**, e.g. this machine's own Ollama. If the network server is off or doesn't have the
+   model, requests go to the fallback after 3 seconds, and the network server is tried again a minute later.
+   The fallback is kept warm, so switching costs no warm-up. The header shows when it's in use.
 
 ## Teaching it
 
