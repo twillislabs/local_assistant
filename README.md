@@ -96,6 +96,22 @@ so tokens and API keys are never committed. Delete that file to go back to the d
 | Wake phrase | "hey computer" | Voice |
 | Language model | `qwen2.5:0.5b` for tools and conversation | Model |
 
+### Copying an assistant to another machine
+
+Settings can be saved as a **profile** and committed, so another machine can start out identical:
+
+```sh
+./profile.sh export home                     # writes profiles/home.json; commit and push it
+./install.sh --profile profiles/home.json    # on the new machine, after cloning
+./profile.sh import profiles/home.json       # or apply it to an installed assistant, then restart
+```
+
+Profiles leave out secrets (the Home Assistant token, UI and hotspot passwords, and tool header values such as
+API keys); enter them on the new machine. Importing never blanks secrets the machine already has. For a
+fully hands-off copy, `./profile.sh export home --with-secrets` writes `profiles/home.secret.json`, which is
+git-ignored. Copy it across yourself and don't commit it. Wi-Fi networks and passwords are stored by
+NetworkManager and are never part of a profile. The System page has the same Export and Import buttons.
+
 ## Tools
 
 Requests that mention a tool (its keywords or tool names, or home-control phrasing for Home Assistant)
@@ -172,6 +188,8 @@ rest_command:
 | `voice.py` | Microphone, wake phrase, speech recognition, speech, personalities, indicator |
 | `netmgr.py` | Wi-Fi, static IP and the setup hotspot (NetworkManager) |
 | `bridge.py` | Arduino UNO Q Bridge client and sketch flashing |
+| `profiles.py` | Export and import settings profiles (`profile.sh`) |
+| `profiles/` | Committed settings profiles |
 | `index.html` | The web page |
 | `mcu/agent_led/` | UNO Q microcontroller sketch for the header-pin LED |
 

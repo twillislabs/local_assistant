@@ -16,6 +16,7 @@ A local voice assistant: a Python web server (`web.py`) that routes requests to 
 | `voice.py` | Mic loop, wake phrase, Vosk STT, Piper TTS, personalities/easter eggs, `Indicator` |
 | `netmgr.py` | NetworkManager (nmcli) Wi-Fi, static IP, setup hotspot watchdog |
 | `bridge.py` | UNO Q Bridge (arduino-router msgpack-RPC) client and sketch flashing |
+| `profiles.py`, `profile.sh`, `profiles/` | Settings profiles: export/import settings to replicate an assistant |
 | `index.html` | The whole UI: one file, vanilla JS, no build step |
 | `mcu/agent_led/` | UNO Q microcontroller sketch for the header-pin LED |
 | `install.sh`, `setup-root.sh` | User install (venv, models, services) and optional one-time root setup |
@@ -30,7 +31,7 @@ Runtime state that is not in the repo: `venv/`, `models/` (both made by `install
 - **One reload at a time.** `Agent.reload` holds `_reload_lock`; tool changes trigger reloads from threads.
 - **Defaults must work from a fresh clone.** New settings need a default in `agent.DEFAULTS` (or `voice.DEFAULTS` / `INDICATOR_DEFAULTS`). Saved config is merged over defaults, so existing installs pick up new keys automatically.
 - **Platform-agnostic.** Guard hardware features (Bridge, sysfs LEDs, GPIO, NetworkManager, ALSA) so the app still runs without them; the UI hides options using `/api/platform`.
-- **Secrets.** The HA token, UI password and tool header values are masked before being sent to the browser (`masked_config`, `mask_tool`); masked values sent back mean "keep the saved one".
+- **Secrets.** The HA token, UI password and tool header values are masked before being sent to the browser (`masked_config`, `mask_tool`); masked values sent back mean "keep the saved one". Committed profiles (`profiles/*.json`) must never contain them: `profiles.export` blanks `SECRETS` and all header values unless `--with-secrets`, which writes a git-ignored `*.secret.json`. A new secret setting must be added to `profiles.SECRETS` (or be a `headers` dict) too.
 - **Dependencies.** Stdlib plus `requirements.txt` only. No web framework, no frontend build.
 
 ## Working on the dev board

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Install or update the assistant. Run as your normal user from the repo folder:
-#   ./install.sh              standard install
-#   ./install.sh --with-hal   also download the HAL 9000 voice
+#   ./install.sh                                standard install
+#   ./install.sh --with-hal                     also download the HAL 9000 voice
+#   ./install.sh --profile profiles/NAME.json   start from another assistant's settings
 # Safe to run again; it skips what's already done.
 set -e
 
@@ -9,12 +10,18 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 PY="$DIR/venv/bin/python"
 MODEL=qwen2.5:0.5b
 WITH_HAL=0
-for arg in "$@"; do
-  case "$arg" in
+PROFILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --with-hal) WITH_HAL=1 ;;
-    *) echo "unknown option: $arg"; exit 1 ;;
+    --profile) PROFILE="$2"; shift ;;
+    *) echo "unknown option: $1"; exit 1 ;;
   esac
+  shift
 done
+if [ -n "$PROFILE" ] && [ ! -f "$PROFILE" ]; then
+  echo "Profile not found: $PROFILE"; exit 1
+fi
 
 need() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing $1. Install it first: $2"; exit 1; }
@@ -50,7 +57,7 @@ get_voice() {
   curl -fL --progress-bar -o "$DIR/models/voices/$1.onnx" "$2"
 }
 get_voice en_US-lessac-medium https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
-if [ "$WITH_HAL" = 1 ]; then
+if [ "$WITH_HAL" = 1 ] || { [ -n "$PROFILE" ] && grep -q '"voice": "hal"' "$PROFILE"; }; then
   get_voice hal https://huggingface.co/OccultAI/HAL-9000-Piper-TTS/resolve/main/hal.onnx
 fi
 
@@ -102,6 +109,10 @@ for i in $(seq 1 30); do
 done
 OLLAMA_HOST=127.0.0.1:11436 ollama pull "$MODEL"  # conversation
 
+if [ -n "$PROFILE" ]; then
+  echo "== Settings from $PROFILE"
+  "$PY" "$DIR/profiles.py" import "$PROFILE"
+fi
 systemctl --user enable assistant
 systemctl --user restart assistant
 

@@ -25,6 +25,7 @@ import requests
 
 import agent as agent_mod
 import bridge
+import profiles
 import tools as tools_mod
 import voice as voice_mod
 from agent import HA_ID, Agent, Config, HomeAssistant
@@ -216,6 +217,18 @@ class Handler(BaseHTTPRequestHandler):
                               "indicator_error": voice.indicator.error},
                     "system": system_info(),
                 })
+            if url.path == "/api/profile/export":
+                with_secrets = q.get("secrets", ["0"])[0] == "1"
+                with config.lock:
+                    body = json.dumps(profiles.export(config.data, with_secrets), indent=2).encode()
+                name = socket.gethostname() + (".secret" if with_secrets else "")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Disposition", f'attachment; filename="{name}.json"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if url.path == "/api/platform":
                 return self._send(200, platform_info())
             if url.path == "/api/tools":
@@ -256,6 +269,15 @@ class Handler(BaseHTTPRequestHandler):
                 if b.get("speak") and not b.get("dry_run"):
                     return self._send(200, voice.respond(b["text"]).get("result", {}))
                 return self._send(200, agent.ask(b["text"], dry_run=bool(b.get("dry_run"))))
+            if path == "/api/profile/import":
+                profile = b["profile"]
+                if not isinstance(profile, dict) or not ({"ollama", "voice", "tools"} & set(profile)):
+                    return self._send(400, {"error": "that doesn't look like an assistant settings profile"})
+                with config.lock:
+                    profiles.write_settings(profiles.merge(config.data, profile))
+                # Settings are read all over the app at startup; a restart applies them cleanly.
+                run_later(["systemctl", "--user", "restart", "assistant"])
+                return self._send(200, {"ok": True})
             if path == "/api/tools/save":
                 entry = b["tool"]
                 if entry.get("type") not in ("homeassistant", *tools_mod.KINDS):

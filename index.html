@@ -524,6 +524,18 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
       <div class="btns"><button class="b primary" id="u-save">Save</button><span class="msg" id="u-msg"></span></div>
     </div>
     <div class="card">
+      <h2>Copy this assistant</h2>
+      <p class="hint">Export the settings (tools, personalities, voice, model, network options) to set up another machine the same way. Without secrets, tokens, passwords and API keys are left out; enter them on the new machine. Wi-Fi passwords are never included.</p>
+      <label class="check"><input type="checkbox" id="pf-secrets"> Include tokens and passwords (keep that file private; don't commit it)</label>
+      <div class="btns">
+        <button class="b" id="pf-export">Export settings</button>
+        <input type="file" id="pf-file" accept=".json,application/json" hidden>
+        <button class="b" id="pf-import">Import settings…</button>
+        <span class="msg" id="pf-msg"></span>
+      </div>
+      <p class="hint">From the command line: <code>./profile.sh export NAME</code> writes <code>profiles/NAME.json</code> to commit to git; <code>./install.sh --profile profiles/NAME.json</code> sets up a new machine with it.</p>
+    </div>
+    <div class="card">
       <h2>Power</h2>
       <div class="btns" style="margin-top:0">
         <button class="b" id="restart">Restart agent service</button>
@@ -934,7 +946,19 @@ $("#u-save").onclick = () => act($("#u-save"), $("#u-msg"), async () => {
   CFG = await api("/api/config/ui", {password: $("#u-pass").value, clear_password: $("#u-clear").checked, port: +$("#u-port").value});
   $("#u-pass").value = ""; $("#u-clear").checked = false; fill();
 });
-$("#restart").onclick = () => act($("#restart"), $("#p-msg"), () => api("/api/system/restart", {}), "Restarting; the model takes about a minute to warm up again.");
+$("#pf-export").onclick = () => { location.href = "/api/profile/export?secrets=" + ($("#pf-secrets").checked ? "1" : "0"); };
+$("#pf-import").onclick = () => $("#pf-file").click();
+$("#pf-file").onchange = async () => {
+  const file = $("#pf-file").files[0]; $("#pf-file").value = "";
+  if (!file) return;
+  let profile;
+  try { profile = JSON.parse(await file.text()); } catch { return say($("#pf-msg"), "That file isn't valid JSON", false); }
+  const from = profile._profile ? ` (exported from ${profile._profile.from} on ${profile._profile.exported})` : "";
+  if (!confirm(`Replace this assistant's settings with ${file.name}${from}?\n\nTokens and passwords the file doesn't include are kept. The old settings are backed up, and the assistant restarts.`)) return;
+  await act($("#pf-import"), $("#pf-msg"), () => api("/api/profile/import", {profile}), "Imported; restarting. Reloading the page in 20 seconds…");
+  setTimeout(() => location.reload(), 20000);
+};
+$("#restart").onclick =() => act($("#restart"), $("#p-msg"), () => api("/api/system/restart", {}), "Restarting; the model takes about a minute to warm up again.");
 $("#reboot").onclick = () => { if (confirm("Reboot the board?")) act($("#reboot"), $("#p-msg"), () => api("/api/system/reboot", {}), "Rebooting…"); };
 
 // ---- init ----

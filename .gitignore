@@ -13,3 +13,5 @@ mcu/**/.cache/
 .gh_token
 .ha_token
 config.json
+# Settings profiles exported with tokens and passwords (profile.sh export NAME --with-secrets)
+profiles/*.secret.json

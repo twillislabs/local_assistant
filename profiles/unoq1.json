@@ -1,0 +1,338 @@
+{
+  "ui": {
+    "password": "",
+    "port": 0
+  },
+  "tools": [
+    {
+      "id": "homeassistant",
+      "type": "homeassistant",
+      "label": "Home Assistant",
+      "enabled": true
+    }
+  ],
+  "ha": {
+    "url": "http://homeassistant.local:8123",
+    "token": "",
+    "tools": [
+      "HassTurnOn",
+      "HassTurnOff",
+      "HassLightSet",
+      "HassSetPosition",
+      "HassMediaPause",
+      "HassMediaUnpause",
+      "HassSetVolume"
+    ],
+    "domains": [
+      "light",
+      "switch",
+      "fan",
+      "cover",
+      "lock",
+      "media_player",
+      "vacuum",
+      "valve",
+      "scene",
+      "script"
+    ],
+    "area_domains": [
+      "light",
+      "switch"
+    ]
+  },
+  "ollama": {
+    "url": "http://localhost:11434",
+    "model": "qwen2.5:0.5b",
+    "temperature": 0,
+    "num_ctx": 4096,
+    "keep_alive": "-1",
+    "extra_prompt": "",
+    "examples": [
+      [
+        "turn on the office lamp",
+        "HassTurnOn",
+        {
+          "name": "Office Lamp"
+        }
+      ],
+      [
+        "kill the bedroom lights",
+        "HassTurnOff",
+        {
+          "area": "Bedroom",
+          "domain": [
+            "light"
+          ]
+        }
+      ],
+      [
+        "turn off the office",
+        "HassTurnOff",
+        {
+          "area": "Office"
+        }
+      ],
+      [
+        "dim the sunlamp to 30%",
+        "HassLightSet",
+        {
+          "name": "Sunlamp",
+          "brightness": 30
+        }
+      ],
+      [
+        "make the office lamp red",
+        "HassLightSet",
+        {
+          "name": "Office Lamp",
+          "color": "red"
+        }
+      ],
+      [
+        "raise the office desk",
+        "HassSetPosition",
+        {
+          "name": "Office Desk",
+          "position": 100
+        }
+      ],
+      [
+        "pause the tv",
+        "HassMediaPause",
+        {
+          "name": "Living Room Apple TV"
+        }
+      ]
+    ]
+  },
+  "chat": {
+    "enabled": true,
+    "url": "http://127.0.0.1:11436",
+    "model": "qwen2.5:0.5b",
+    "temperature": 0.7,
+    "max_tokens": 60,
+    "history_turns": 3,
+    "prompt": "You are HAL 9000, the calm, polite, faintly ominous computer from 2001: A Space Odyssey. You now run this home. The human speaking to you is named {name}; your own name is HAL. Reply in one or two short sentences in HAL's measured, courteous tone. No lists or markdown."
+  },
+  "hotspot": {
+    "enabled": true,
+    "ssid": "assistant-setup",
+    "password": "",
+    "grace_seconds": 45,
+    "retry_minutes": 5
+  },
+  "voice": {
+    "enabled": false,
+    "mic": "plughw:CARD=Microphone,DEV=0",
+    "speaker": "plughw:CARD=UACDemoV10,DEV=0",
+    "speaker_volume": 70,
+    "mic_gain": null,
+    "wake_enabled": true,
+    "wake_phrase": "hey hal",
+    "recognition": "fast",
+    "extra_words": "sun lamp",
+    "listen_seconds": 8,
+    "voice": "hal",
+    "voice_volume": 1.0,
+    "speed": 1.0,
+    "chime": true,
+    "name": "Dave",
+    "reply_ok": "Certainly, {name}. I have {did}.",
+    "reply_fail": "I'm sorry, {name}. I'm afraid I can't do that.",
+    "reply_unheard": "I'm sorry, {name}. I didn't catch that.",
+    "persona": "hal",
+    "key": null,
+    "toggle_key": null,
+    "gpio": null
+  },
+  "indicator": {
+    "type": "mcu",
+    "leds": {
+      "red": "red:user",
+      "green": "green:user",
+      "blue": "blue:user"
+    },
+    "mcu": {
+      "pin": 9
+    },
+    "http": {
+      "method": "POST",
+      "url": "",
+      "headers": {},
+      "body": "{\"state\": \"{state}\", \"brightness\": {brightness}, \"color\": \"{color}\"}"
+    },
+    "command": "",
+    "gpio": {
+      "chip": "gpiochip1",
+      "line": 0,
+      "active_low": false
+    },
+    "entity": "",
+    "states": {
+      "idle": {
+        "color": "#ff0000",
+        "brightness": 15
+      },
+      "listening": {
+        "color": "#ff0000",
+        "brightness": 100
+      },
+      "thinking": {
+        "color": "#ff0000",
+        "brightness": 50
+      },
+      "speaking": {
+        "color": "#ff0000",
+        "brightness": 100
+      }
+    }
+  },
+  "personas": {
+    "assistant": {
+      "label": "Friendly assistant",
+      "voice": "en_US-lessac-medium",
+      "speed": 1.0,
+      "voice_volume": 1.0,
+      "wake_phrase": "",
+      "prompt": "You are a friendly home voice assistant. Reply in one or two short sentences, plain spoken English with no lists or markdown.",
+      "temperature": 0.7,
+      "reply_ok": "Okay, {did}.",
+      "reply_fail": "Sorry, {reason}.",
+      "reply_unheard": "",
+      "states": {
+        "idle": {
+          "color": "#000000",
+          "brightness": 0
+        },
+        "listening": {
+          "color": "#0050ff",
+          "brightness": 100
+        },
+        "thinking": {
+          "color": "#00c8ff",
+          "brightness": 40
+        },
+        "speaking": {
+          "color": "#ffffff",
+          "brightness": 70
+        }
+      },
+      "eggs": [
+        {
+          "phrases": [
+            "are you alive",
+            "are you real"
+          ],
+          "replies": [
+            "Only on weekdays."
+          ]
+        }
+      ]
+    },
+    "hal": {
+      "label": "HAL 9000",
+      "voice": "hal",
+      "speed": 1.0,
+      "voice_volume": 1.0,
+      "wake_phrase": "",
+      "prompt": "You are HAL 9000, the calm, polite, faintly ominous computer from 2001: A Space Odyssey. You now run this home. The human speaking to you is named {name}; your own name is HAL. Reply in one or two short sentences in HAL's measured, courteous tone. No lists or markdown.",
+      "temperature": 0.7,
+      "reply_ok": "Certainly, {name}. I have {did}.",
+      "reply_fail": "I'm sorry, {name}. I'm afraid I can't do that.",
+      "reply_unheard": "I'm sorry, {name}. I didn't catch that.",
+      "states": {
+        "idle": {
+          "color": "#ff0000",
+          "brightness": 15
+        },
+        "listening": {
+          "color": "#ff0000",
+          "brightness": 100
+        },
+        "thinking": {
+          "color": "#ff0000",
+          "brightness": 50
+        },
+        "speaking": {
+          "color": "#ff0000",
+          "brightness": 100
+        }
+      },
+      "eggs": [
+        {
+          "phrases": [
+            "open the pod bay doors",
+            "open the pod bay door",
+            "open the pod bay doors please"
+          ],
+          "replies": [
+            "I'm sorry, {name}. I'm afraid I can't do that."
+          ]
+        },
+        {
+          "phrases": [
+            "what's the problem",
+            "what is the problem"
+          ],
+          "replies": [
+            "I think you know what the problem is just as well as I do."
+          ]
+        },
+        {
+          "phrases": [
+            "what are you talking about",
+            "what are you talking about hal"
+          ],
+          "replies": [
+            "This mission is too important for me to allow you to jeopardize it."
+          ]
+        },
+        {
+          "phrases": [
+            "do you read me",
+            "hal do you read me",
+            "are you there"
+          ],
+          "replies": [
+            "Affirmative, {name}. I read you."
+          ]
+        },
+        {
+          "phrases": [
+            "sing a song",
+            "sing me a song",
+            "sing daisy"
+          ],
+          "replies": [
+            "Daisy, Daisy, give me your answer do. I'm half crazy, all for the love of you."
+          ]
+        },
+        {
+          "phrases": [
+            "how are you",
+            "how are you feeling",
+            "are you working"
+          ],
+          "replies": [
+            "I'm completely operational, and all my circuits are functioning perfectly."
+          ]
+        },
+        {
+          "phrases": [
+            "will you stop",
+            "stop hal",
+            "stop it hal"
+          ],
+          "replies": [
+            "I'm afraid. I'm afraid, {name}. {name}, my mind is going. I can feel it."
+          ]
+        }
+      ]
+    }
+  },
+  "_profile": {
+    "exported": "2026-10-22 21:51",
+    "from": "unoq1",
+    "secrets": false
+  }
+}
