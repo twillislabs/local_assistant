@@ -344,8 +344,8 @@ class Handler(BaseHTTPRequestHandler):
                     current = config.data["tools"]
                     old = next((t for t in current if t["id"] == entry.get("id")), None)
                     if old is None:
-                        if entry["type"] == "homeassistant":
-                            entry["id"] = HA_ID
+                        if entry["type"] in ("homeassistant", "calculator", "clock"):  # one of each
+                            entry["id"] = HA_ID if entry["type"] == "homeassistant" else entry["type"]
                         else:
                             base = re.sub(r"[^a-z0-9]+", "-", (entry.get("label") or entry["type"]).lower()).strip("-") or entry["type"]
                             entry["id"], n = base, 2

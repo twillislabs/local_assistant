@@ -15,7 +15,10 @@ Speech recognition, the language model and speech synthesis all run locally.
 - **Tools**, added and removed on the Tools page:
   - **Home Assistant** (installed by default): "turn off the office", "dim the floor lamp to 30%", "pause the tv".
     Naming just a room switches its lights and switches.
-  - **Weather**: current conditions and tomorrow's forecast from Open-Meteo, no API key.
+  - **Calculator** and **Clock** (installed by default): arithmetic, percentages, powers, roots and unit
+    conversions; the time, date, time in other cities and days until a date. Answered by rules, instantly and
+    exactly. A small language model guesses at maths and has no clock, so these never go to it.
+  - **Weather**: conditions and the forecast for the coming week from Open-Meteo, no API key.
   - **MCP servers**: any Model Context Protocol server, over HTTP or by running a local command (stdio).
   - **HTTP API** and **script** tools: describe one tool (name, what it does, parameters) and the URL or
     command to run, and optionally how to say the result.
@@ -94,7 +97,7 @@ so tokens and API keys are never committed. Delete that file to go back to the d
 | Default | Value | Change it on |
 |---|---|---|
 | Web page | port 80 if allowed, otherwise 8080 | System |
-| Tools | Home Assistant | Tools |
+| Tools | Home Assistant, Calculator, Clock | Tools |
 | Setup hotspot | `assistant-setup`, password `hasetup123` | Network (**change this**) |
 | UI password | none (anyone on your network can use it) | System (**set one**) |
 | Wake phrase | "hey computer" | Voice |
@@ -219,7 +222,7 @@ rest_command:
 |---|---|
 | `web.py` | Web server, JSON API, platform detection and startup |
 | `agent.py` | Settings, Home Assistant, routing, tool calls, safety checks and conversation |
-| `tools.py` | Weather, MCP (HTTP and stdio), HTTP API and script tools |
+| `tools.py` | Calculator, Clock, Weather, MCP (HTTP and stdio), HTTP API and script tools |
 | `voice.py` | Microphone, wake phrase, speech recognition, speech, personalities, indicator |
 | `netmgr.py` | Wi-Fi, static IP and the setup hotspot (NetworkManager) |
 | `bridge.py` | Arduino UNO Q Bridge client and sketch flashing |

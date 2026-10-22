@@ -82,38 +82,11 @@ DEFAULTS = {
 }
 
 
-_UNITS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
-                                    "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
-_TENS = {w: 10 * i for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split(), 2)}
+spoken_numbers = tools_mod.spoken_numbers
 
-
-def spoken_numbers(text):
-    """'set it to twenty five percent' -> 'set it to 25 percent'. Speech recognition spells numbers
-    out, and the small model handles digits much more reliably."""
-    out, value, words = [], None, text.split()
-    for i, w in enumerate(words):
-        lw = w.lower().strip(",.!?")
-        nxt = words[i + 1].lower().strip(",.!?") if i + 1 < len(words) else ""
-        if lw in _UNITS and value is not None and value >= 20 and value % 10 == 0 and _UNITS[lw] < 10:
-            value += _UNITS[lw]  # "twenty" + "five"
-            continue
-        if lw == "hundred" and (value is not None or (out and out[-1].lower() == "a")):
-            if value is None:
-                out.pop()  # "a hundred"
-            value = (value or 1) * 100
-            continue
-        if value is not None:  # anything else ends the number being built
-            out.append(str(value))
-            value = None
-        if lw in _UNITS:
-            value = _UNITS[lw]
-        elif lw in _TENS:
-            value = _TENS[lw]
-        else:
-            out.append(w)
-    if value is not None:
-        out.append(str(value))
-    return " ".join(out)
+# Built-in tools every install gets once. Removing one on the Tools page keeps it removed.
+BUILTINS = [{"id": "calculator", "type": "calculator", "label": "Calculator", "enabled": True},
+            {"id": "clock", "type": "clock", "label": "Clock", "enabled": True, "timezone": ""}]
 
 
 def _merge(base, over):
@@ -131,6 +104,17 @@ class Config:
             with open(CONFIG_PATH) as f:
                 data = json.load(f)
         self.data = _merge(DEFAULTS, data)
+        # Offer each built-in tool once (new installs and existing ones); a removed one stays removed.
+        offered = self.data.setdefault("builtins_offered", [])
+        added = False
+        for builtin in BUILTINS:
+            if builtin["type"] not in offered:
+                if not any(t.get("type") == builtin["type"] for t in self.data["tools"]):
+                    self.data["tools"].append(copy.deepcopy(builtin))
+                offered.append(builtin["type"])
+                added = True
+        if added and data:
+            self.save()
         legacy = os.path.expanduser("~/.ha_token")
         if not self.data["ha"]["token"] and os.path.exists(legacy):
             self.data["ha"]["token"] = open(legacy).read().strip()
@@ -256,6 +240,11 @@ class Agent:
                     continue
                 old = self.providers.get(pid)
                 p = old if old is not None and old.cfg == entry else tools_mod.make(entry)
+                if not p.model_tool:
+                    # Calculator, Clock: answered by rules (direct_answer), not offered to the model.
+                    providers[pid] = p
+                    status[pid] = {"ok": True, "message": "built in, answers instantly", "tools": []}
+                    continue
                 renamed = {t["name"]: add(t["name"], (pid, t["name"]), t["description"], t["parameters"]) for t in p.tools()}
                 provider_examples += [[said, renamed[tool], args] for said, tool, args in p.examples() if tool in renamed]
                 providers[pid] = p
@@ -266,6 +255,8 @@ class Agent:
         for pid, old in self.providers.items():  # stop MCP server processes we no longer use
             if providers.get(pid) is not old and hasattr(old, "close"):
                 old.close()
+        for p in providers.values():
+            p.attach(providers)  # e.g. the Clock uses the Weather location's time zone
 
         system = "You are a helpful assistant that acts by calling tools. Always call exactly one tool.\n"
         if ha:
@@ -471,8 +462,20 @@ class Agent:
         return bool(words & {"on", "off"} and words & (known | {"lights", "light", "lamp", "lamps"}))
 
     def _matched_providers(self, words):
-        """Non-Home-Assistant providers whose keywords appear in the request."""
-        return [pid for pid, p in list(self.providers.items()) if words & p.keywords()]
+        """Non-Home-Assistant providers (offered to the model) whose keywords appear in the request."""
+        return [pid for pid, p in list(self.providers.items()) if p.model_tool and words & p.keywords()]
+
+    def direct_answer(self, text):
+        """(provider id, provider, args) for a built-in that answers this by rules (maths, time), else None."""
+        for pid, p in list(self.providers.items()):
+            if not p.model_tool:
+                try:
+                    args = p.direct(text)
+                except Exception:
+                    args = None
+                if args is not None:
+                    return pid, p, args
+        return None
 
     def is_command(self, text):
         """Cheap router: phrasing for any installed tool goes to the tool path, everything else is conversation."""
@@ -797,6 +800,15 @@ class Agent:
         sc, phrase = self.shortcut_for(text)
         if sc:
             return self.run_shortcut(sc, phrase, text, dry_run, on_sentence)
+        direct = self.direct_answer(text)
+        if direct:  # maths and time: computed, never guessed (and read-only, so fine in a dry run)
+            pid, p, args = direct
+            t0 = time.time()
+            name = p.tools()[0]["name"]
+            entry, reply, spoken = self._provider_call(p, (pid, name), name, args, text, False, on_sentence)
+            out = {"ok": not entry.get("error"), "calls": [entry], "seconds": round(time.time() - t0, 1)}
+            out.update(mode="tool", reply=reply or entry.get("result") or entry.get("error"), spoken=spoken)
+            return out
         if self.config.get("chat")["enabled"] and not self.is_command(text):
             return self.converse(text, on_sentence)
         return self.command(text, dry_run, on_sentence)

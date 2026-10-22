@@ -489,7 +489,7 @@ class Voice:
         text += " forget change update learned remember"
         for p in list(self.agent.providers.values()):
             try:
-                text += " " + " ".join(p.keywords()) + " " + " ".join(e[0] for e in p.examples())
+                text += " " + p.vocabulary + " " + " ".join(p.keywords()) + " " + " ".join(e[0] for e in p.examples())
             except Exception:
                 pass
         words = set(COMMAND_WORDS) | set(re.findall(r"[a-z']+", text.lower().replace("’", "'")))
@@ -706,7 +706,8 @@ class Voice:
         unknown = raw.split().count("[unk]")
         # Teaching ("when I say ...", "remember that ...") names new words, so it needs full English.
         teaching = bool(set(fast.split()) & {"say", "means", "remember", "forget"})
-        if fast and unknown <= 1 and not teaching and (self.agent.is_command(fast) or self.agent.shortcut_for(fast)[0]):
+        if fast and unknown <= 1 and not teaching and (self.agent.is_command(fast) or self.agent.shortcut_for(fast)[0]
+                                                       or self.agent.direct_answer(fast)):
             cancel.set()  # a command: the fast result is better; stop the slow recognizer
             oq.put(None)
             return fast

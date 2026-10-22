@@ -322,6 +322,8 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
       <div class="composer" style="margin-top:0">
         <select id="tl-add">
           <option value="homeassistant">Home Assistant (devices, rooms, media)</option>
+          <option value="calculator">Calculator (maths and unit conversions, built in)</option>
+          <option value="clock">Clock (time, date, days until…, built in)</option>
           <option value="weather">Weather (Open-Meteo, no API key)</option>
           <option value="mcp">MCP server (HTTP or a local command)</option>
           <option value="http">HTTP API (one tool you describe)</option>
@@ -337,6 +339,15 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
       <div class="row">
         <div><label>Name</label><input type="text" id="tl-label"></div>
         <div><label class="check" style="margin-top:28px"><input type="checkbox" id="tl-enabled"> Enabled</label></div>
+      </div>
+      <div data-for="calculator">
+        <p class="hint">Answers arithmetic ("23 times 47"), percentages ("15 percent of 80"), powers and roots, and conversions
+          ("72 fahrenheit in celsius", "how many cups in a liter") exactly and instantly, without the language model. No settings.</p>
+      </div>
+      <div data-for="clock">
+        <p class="hint">Answers the time, date, day, "what time is it in Tokyo" and "how many days until Christmas" from the clock, without the language model.</p>
+        <label>Time zone (blank = the Weather tool's location, or this machine's own)</label>
+        <input type="text" id="tl-timezone" placeholder="e.g. Europe/London">
       </div>
       <div data-for="weather">
         <div class="row">
@@ -838,8 +849,12 @@ $("#ha-reload").onclick = () => act($("#ha-reload"), $("#ha-msg2"), async () => 
 }, "Reloaded; warming the model…");
 
 // ---- tools ----
-const TOOL_TYPES = {homeassistant: "Home Assistant", weather: "Weather", mcp: "MCP server", http: "HTTP API", command: "Script"};
+const TOOL_TYPES = {homeassistant: "Home Assistant", calculator: "Calculator", clock: "Clock", weather: "Weather",
+                    mcp: "MCP server", http: "HTTP API", command: "Script"};
+const SINGLE_TOOLS = ["homeassistant", "calculator", "clock"];  // can only be installed once
 const TOOL_DEFAULTS = {
+  calculator: {label: "Calculator"},
+  clock: {label: "Clock", timezone: ""},
   weather: {label: "Weather", location: "", units: "celsius"},
   mcp: {label: "MCP server", transport: "http", url: "", command: "", headers: {}, tools: [], keywords: "", example: "", reply: ""},
   http: {label: "HTTP tool", name: "", description: "", params: [], method: "GET", url: "", body: "", headers: {}, keywords: "", example: "", reply: ""},
@@ -858,10 +873,12 @@ function renderTools() {
         <button class="b" data-edit="${esc(t.id)}">${t.type === "homeassistant" ? "Settings" : "Edit"}</button>
         <button class="b danger" data-remove="${esc(t.id)}">Remove</button></td></tr>`).join("") + `</table>`
     : `<p class="hint">No tools installed: it can only chat. Add one below.</p>`;
-  const haInstalled = CFG.tools.some((t) => t.type === "homeassistant");
-  $("#tl-add").querySelector('option[value="homeassistant"]').hidden = haInstalled;
-  if (haInstalled && $("#tl-add").value === "homeassistant") $("#tl-add").value = "weather";
-  $("#ha-missing").hidden = haInstalled;
+  for (const type of SINGLE_TOOLS) {
+    const installed = CFG.tools.some((t) => t.type === type);
+    $("#tl-add").querySelector(`option[value="${type}"]`).hidden = installed;
+    if (installed && $("#tl-add").value === type) $("#tl-add").value = "weather";
+  }
+  $("#ha-missing").hidden = CFG.tools.some((t) => t.type === "homeassistant");
 }
 function toolStatusHtml(t, s) {
   if (t.enabled === false) return `<span class="hint">off</span>`;
@@ -896,6 +913,9 @@ $("#tl-list").onchange = (e) => {
 };
 $("#tl-add-go").onclick = () => {
   const type = $("#tl-add").value;
+  if (type === "calculator") {  // nothing to set up
+    return act($("#tl-add-go"), $("#tl-msg"), () => saveTool({type, id: "calculator", label: "Calculator", enabled: true}, $("#tl-msg"), "Calculator added"));
+  }
   if (type === "homeassistant") {
     return act($("#tl-add-go"), $("#tl-msg"), async () => {
       await saveTool({type, label: "Home Assistant", enabled: true}, $("#tl-msg"), "Home Assistant added");
@@ -913,7 +933,7 @@ function openTool(t) {
   $("#tl-title").textContent = (t.id ? "Edit " : "New ") + TOOL_TYPES[t.type];
   document.querySelectorAll("#tl-editor [data-for]").forEach((el) => { el.hidden = !el.dataset.for.split(" ").includes(t.type); });
   $("#tl-label").value = f.label || ""; $("#tl-enabled").checked = f.enabled !== false;
-  $("#tl-location").value = f.location || ""; $("#tl-units").value = f.units || "celsius";
+  $("#tl-location").value = f.location || ""; $("#tl-units").value = f.units || "celsius"; $("#tl-timezone").value = f.timezone || "";
   $("#tl-transport").value = f.transport || "http"; $("#tl-mcp-url").value = f.url || ""; $("#tl-mcp-cmd").value = f.command || "";
   $("#tl-name").value = f.name || ""; $("#tl-desc").value = f.description || "";
   $("#tl-params").value = (f.params || []).map((p) => `${p.name}: ${p.description || ""}`).join("\n");
@@ -940,6 +960,7 @@ function toolValues() {
   });
   const common = {keywords: $("#tl-keywords").value.trim(), example: $("#tl-example").value.trim(), reply: $("#tl-reply").value.trim()};
   if (t === "weather") Object.assign(out, {location: $("#tl-location").value.trim(), units: $("#tl-units").value});
+  if (t === "clock") Object.assign(out, {timezone: $("#tl-timezone").value.trim()});
   if (t === "mcp") Object.assign(out, common, {transport: $("#tl-transport").value, url: $("#tl-mcp-url").value.trim(),
     command: $("#tl-mcp-cmd").value.trim(), headers: headersObj($("#tl-headers").value),
     tools: [...document.querySelectorAll("#tl-mcp-tools input:checked")].map((i) => i.value)});
