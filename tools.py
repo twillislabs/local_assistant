@@ -9,6 +9,7 @@ Each provider is configured on the Tools page and stored in config["tools"]:
 A provider exposes tools (name, description, JSON-schema parameters), runs them, and
 optionally phrases the result itself; otherwise the chat model summarises it.
 """
+import datetime
 import json
 import re
 import shlex
@@ -71,32 +72,66 @@ WMO = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "fo
        96: "thunderstorms with hail", 99: "thunderstorms with hail"}
 
 
+SNOW_CODES = {71, 73, 75, 77, 85, 86}
+STORM_CODES = {95, 96, 99}
+WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
 class Weather(Provider):
-    KEYWORDS = {"weather", "temperature", "forecast", "rain", "raining", "snow", "snowing", "sunny", "cloudy",
-                "outside", "umbrella", "wind", "windy", "humid", "humidity", "hot", "cold", "warm", "degrees"}
+    # What a question is about, checked in order; the first match decides the answer's focus.
+    CONDITIONS = [
+        ("storm", {"storm", "storms", "stormy", "thunder", "thunderstorm", "thunderstorms", "lightning"}),
+        ("snow", {"snow", "snowing", "snowy", "snowfall", "sleet", "blizzard"}),
+        ("rain", {"rain", "raining", "rainy", "umbrella", "wet", "shower", "showers", "drizzle", "precipitation"}),
+        ("fog", {"fog", "foggy", "mist", "misty", "haze", "hazy"}),
+        ("sun", {"sun", "sunny", "sunshine"}),
+        ("cloud", {"cloud", "clouds", "cloudy", "overcast", "grey", "gray", "gloomy"}),
+        ("wind", {"wind", "windy", "breezy", "breeze", "gusty", "gusts"}),
+        ("humid", {"humid", "humidity", "muggy", "sticky"}),
+        ("jacket", {"jacket", "coat", "sweater", "hoodie"}),
+        # "cool" and "bright" are left out: "that's cool" and "make it bright" aren't weather questions.
+        ("temp", {"hot", "cold", "warm", "chilly", "freezing", "temperature", "degrees"}),
+    ]
+    KEYWORDS = {"weather", "forecast", "outside", "weekend"} | {w for _, words in CONDITIONS for w in words}
     _geo = {}
 
     def tools(self):
         return [{"name": "get_weather",
-                 "description": "Current weather and forecast. Use for any question about weather, temperature or rain.",
+                 "description": "Weather now and the forecast for the coming week: rain, snow, sun, clouds, wind, temperature.",
                  "parameters": {"type": "object", "properties": {
                      "location": {"type": "string", "description": "City, only if the user names one"},
-                     "when": {"type": "string", "enum": ["now", "today", "tomorrow"]}}}}]
+                     "when": {"type": "string", "enum": ["now", "today", "tomorrow", "weekend", "week", *WEEKDAYS]}}}}]
 
     def keywords(self):
         return self.KEYWORDS | super().keywords()
 
     def examples(self):
         return [["what's the weather like", "get_weather", {"when": "now"}],
-                ["will it rain tomorrow", "get_weather", {"when": "tomorrow"}]]
+                ["will it rain on saturday", "get_weather", {"when": "saturday"}]]
+
+    PLACE = re.compile(r"\b(?:in|for|at)\s+([a-z][a-z .'-]*?)\s*(?=\b(?:this|today|tomorrow|tonight|on|next|over|"
+                       r"right|now|later|during)\b|[?.!,]|$)")
+
+    def _place(self, text):
+        """A place the user named ("weather in Nashville this weekend"), or "" for the configured one."""
+        m = self.PLACE.search(text.lower())
+        place = m.group(1).strip() if m else ""
+        if not place or place.startswith(("the ", "my ", "our ")) or place in {"here", "town", "the", "home", "general"}:
+            return ""
+        return place.title()
 
     def guess_args(self, text):
+        """Day, place and condition come from the user's words, never the model's guesses
+        (it copies "tomorrow" from its examples and has invented a city called "City")."""
         words = _words(text)
-        if "tomorrow" in words:
-            return {"when": "tomorrow"}
-        if words & {"today", "tonight"}:
-            return {"when": "today"}
-        return {}
+        day = next((d for d in WEEKDAYS if d in words), None)
+        when = ("tomorrow" if "tomorrow" in words else "weekend" if "weekend" in words else day
+                or ("week" if "week" in words else "today" if words & {"today", "tonight"} else "now"))
+        args = {"when": when, "location": self._place(text)}
+        about = next((name for name, ws in self.CONDITIONS if words & ws), None)
+        if about:
+            args["about"] = about
+        return args
 
     def geocode(self, name):
         if name not in self._geo:
@@ -115,24 +150,165 @@ class Weather(Provider):
         lat, lon, label = self.geocode(place)
         f = self.cfg.get("units", "celsius") == "fahrenheit"
         d = requests.get("https://api.open-meteo.com/v1/forecast", timeout=10, params={
-            "latitude": lat, "longitude": lon, "timezone": "auto", "forecast_days": 2,
-            "current": "temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m",
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
+            "latitude": lat, "longitude": lon, "timezone": "auto", "forecast_days": 8,
+            "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_gusts_10m,relative_humidity_2m",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,"
+                     "snowfall_sum,sunshine_duration,daylight_duration,wind_speed_10m_max,wind_gusts_10m_max",
             "temperature_unit": "fahrenheit" if f else "celsius", "wind_speed_unit": "mph" if f else "kmh",
+            "precipitation_unit": "inch" if f else "mm",
         }).json()
-        return json.dumps({"place": label, "when": args.get("when") or "now", "current": d["current"], "daily": d["daily"]}), False
+        return json.dumps({"place": label, "when": args.get("when") or "now", "about": args.get("about", ""),
+                           "fahrenheit": f, "current": d["current"], "daily": d["daily"]}), False
+
+    # ---- phrasing ----
+
+    @staticmethod
+    def _days(d):
+        """Indexes into the daily forecast that the question is about."""
+        dates = [datetime.date.fromisoformat(t) for t in d["daily"]["time"]]
+        when = d["when"]
+        if when in ("now", "today"):
+            return [0]
+        if when == "tomorrow":
+            return [1]
+        if when == "week":
+            return list(range(min(7, len(dates))))
+        if when == "weekend":
+            sat = next((i for i, x in enumerate(dates) if x.weekday() == 5), None)
+            sun = next((i for i, x in enumerate(dates) if x.weekday() == 6), None)
+            return [sun] if sun == 0 or sat is None else [sat, sat + 1] if sat + 1 < len(dates) else [sat]
+        if when in WEEKDAYS:
+            return [next(i for i, x in enumerate(dates) if x.weekday() == WEEKDAYS.index(when))]
+        return [0]
+
+    @staticmethod
+    def _name(d, i):
+        if i == 0:
+            return "today"
+        if i == 1:
+            return "tomorrow"
+        return datetime.date.fromisoformat(d["daily"]["time"][i]).strftime("%A")
+
+    @staticmethod
+    def _wind_word(speed, fahrenheit):
+        kmh = speed * 1.609 if fahrenheit else speed
+        return "calm" if kmh < 10 else "light" if kmh < 20 else "breezy" if kmh < 35 else "windy" if kmh < 50 else "very windy"
+
+    @staticmethod
+    def _sky(d, i):
+        """The day's sky. The daily weather code is the worst hour of the day, so one cloudy hour
+        makes it "overcast"; for dry days, judge by how much of the daylight was sunny instead."""
+        day = d["daily"]
+        code = day["weather_code"][i]
+        if code > 3:
+            return WMO.get(code, "mixed weather")
+        ratio = (day["sunshine_duration"][i] or 0) / max(day["daylight_duration"][i] or 1, 1)
+        return ("sunny" if ratio > 0.8 else "mostly sunny" if ratio > 0.6 else "partly cloudy" if ratio > 0.35
+                else "mostly cloudy" if ratio > 0.15 else "overcast")
+
+    def _clause(self, d, i, about):
+        """A short answer about one day, e.g. 'a 40 percent chance of rain'."""
+        day, f = d["daily"], d["fahrenheit"]
+        hi, lo = round(day["temperature_2m_max"][i]), round(day["temperature_2m_min"][i])
+        rain, code = day["precipitation_probability_max"][i] or 0, day["weather_code"][i]
+        sky = self._sky(d, i)
+        if about == "storm":
+            return f"thunderstorms likely, {rain} percent chance of rain" if code in STORM_CODES else "no storms expected"
+        if about == "snow":
+            amount = day["snowfall_sum"][i] or 0  # cm, or inches in Fahrenheit mode
+            if amount >= 0.1 or code in SNOW_CODES:
+                return f"snow expected" + (f", about {amount:.1f} {'inches' if f else 'centimeters'}" if amount >= 0.1 else "")
+            return "no snow expected" + (f", it'll be too warm with a low of {lo}" if lo > (34 if f else 1) else "")
+        if about == "rain":
+            if rain >= 60:
+                return f"rain likely, a {rain} percent chance"
+            if rain >= 30:
+                return f"maybe some rain, a {rain} percent chance"
+            return f"no rain expected, a {rain} percent chance"
+        if about == "fog":
+            return "foggy" if code in (45, 48) else f"no fog, {sky}"
+        if about in ("sun", "cloud"):
+            hours = round((day["sunshine_duration"][i] or 0) / 3600)
+            return f"{sky}, about {hours} hour{'s' if hours != 1 else ''} of sunshine"
+        if about == "wind":
+            w, g = round(day["wind_speed_10m_max"][i]), round(day["wind_gusts_10m_max"][i])
+            unit = "miles per hour" if f else "kilometers per hour"
+            word = self._wind_word(w, f)
+            return (f"{'light winds' if word == 'light' else word}, up to {w} {unit}"
+                    + (f", gusting to {g}" if g >= w + 8 else ""))
+        if about == "jacket":
+            if lo < (50 if f else 10):
+                return f"bring a jacket, it gets down to {lo}"
+            if hi < (62 if f else 17):
+                return f"a light jacket would help, the high is only {hi}"
+            return f"no jacket needed, {lo} to {hi} degrees"
+        # temp, humid (no daily humidity) and a general forecast
+        rain_note = f", a {rain} percent chance of rain" if rain >= 20 else ""
+        return f"{sky}, a high of {hi} and a low of {lo}{rain_note}"
+
+    def _now(self, d, about):
+        """Answers about right now, from current conditions, or None to use today's forecast."""
+        cur, place, f = d["current"], d["place"], d["fahrenheit"]
+        code, t = cur["weather_code"], round(cur["temperature_2m"])
+        sky = WMO.get(code, "mixed")
+        if about in ("rain", "snow", "storm") and code >= 51:
+            return f"Yes, it's {sky} in {place} right now."
+        if about == "fog" and code in (45, 48):
+            return f"Yes, it's foggy in {place} right now."
+        if about in ("sun", "cloud"):
+            return f"Right now in {place} it's {sky}. Today: {self._clause(d, 0, about)}."
+        if about == "wind":
+            w, g = round(cur["wind_speed_10m"]), round(cur["wind_gusts_10m"])
+            unit = "miles per hour" if f else "kilometers per hour"
+            word = self._wind_word(w, f)
+            start = f"Winds are light in {place} right now" if word == "light" else f"It's {word} in {place} right now"
+            return f"{start}, around {w} {unit}" + (f", gusting to {g}." if g >= w + 8 else ".")
+        if about == "humid":
+            h = round(cur["relative_humidity_2m"])
+            feel = ", so it feels muggy" if h >= 70 and t >= (72 if f else 22) else ""
+            return f"Humidity in {place} is {h} percent right now{feel}."
+        if about in ("temp", None, ""):
+            a = round(cur["apparent_temperature"])
+            feels = f", feeling like {a}" if abs(a - t) >= 3 else ""
+            hi, lo = round(d["daily"]["temperature_2m_max"][0]), round(d["daily"]["temperature_2m_min"][0])
+            rain = d["daily"]["precipitation_probability_max"][0] or 0
+            return (f"Right now in {place} it's {t} degrees and {sky}{feels}. Today's high is {hi} and the low is {lo}"
+                    + (f", with a {rain} percent chance of rain." if rain >= 20 else "."))
+        return None
 
     def reply(self, tool, args, text):
         d = json.loads(text)
-        cur, day = d["current"], d["daily"]
-        i = 1 if d["when"] == "tomorrow" else 0
-        hi, lo = round(day["temperature_2m_max"][i]), round(day["temperature_2m_min"][i])
-        rain = day["precipitation_probability_max"][i] or 0
-        sky = WMO.get(day["weather_code"][i], "mixed weather")
-        if i == 1:
-            return f"Tomorrow in {d['place']}: {sky}, a high of {hi} and a low of {lo}, with a {rain} percent chance of rain."
-        now = f"Right now in {d['place']} it's {round(cur['temperature_2m'])} degrees and {WMO.get(cur['weather_code'], 'mixed')}."
-        return f"{now} Today's high is {hi} and the low is {lo}" + (f", with a {rain} percent chance of rain." if rain >= 20 else ".")
+        about, place = d.get("about") or None, d["place"]
+        if d["when"] == "now":
+            answer = self._now(d, about)
+            if answer:
+                return answer
+        days = self._days(d)
+        if about == "humid" and days != [0]:
+            return f"I only have the current humidity: {self._now(d, 'humid')}"
+        if len(days) == 1:
+            name = self._name(d, days[0])
+            return f"{name[0].upper() + name[1:]} in {place}: {self._clause(d, days[0], about)}."
+        label = "this weekend" if d["when"] == "weekend" else "this week"
+        if about in ("storm", "snow", "rain", "fog"):
+            # Yes/no conditions: name only the days it applies to.
+            noun = {"storm": "storms", "snow": "snow", "rain": "rain", "fog": "fog"}[about]
+            hits = [(i, self._clause(d, i, about)) for i in days]
+            hits = [(i, c) for i, c in hits if not c.startswith("no ")]
+            if not hits:
+                return f"No {noun} expected {label} in {place}."
+            parts = [f"{self._name(d, i).capitalize()}, {c}" for i, c in hits]
+            rest = f" No {noun} the other days." if len(hits) < len(days) else ""
+            return f"{label.capitalize()} in {place}: " + "; ".join(parts) + "." + rest
+        if about in (None, "temp"):
+            # Several days: keep each one short enough to listen to.
+            day = d["daily"]
+            parts = [f"{self._name(d, i).capitalize()}, {self._sky(d, i)}, {round(day['temperature_2m_max'][i])} and "
+                     f"{round(day['temperature_2m_min'][i])}" + (f", {day['precipitation_probability_max'][i]} percent chance of rain"
+                     if (day["precipitation_probability_max"][i] or 0) >= 30 else "") for i in days]
+        else:
+            parts = [f"{self._name(d, i).capitalize()}, {self._clause(d, i, about)}" for i in days]
+        return f"{label.capitalize()} in {place}: " + "; ".join(parts) + "."
 
 
 # ---- MCP servers ----
