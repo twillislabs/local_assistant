@@ -237,7 +237,7 @@ class Handler(BaseHTTPRequestHandler):
                     "active": agent.active,
                     "pull": pull_state,
                     "voice": {"state": voice.state, "error": voice.error, "level": round(voice.level, 3),
-                              "download": voice.download, "note": getattr(voice, "state_note", ""),
+                              "download": voice.download, "note": getattr(voice, "state_note", ""), "last_wake": getattr(voice, "last_wake", None),
                               "indicator_error": voice.indicator.error},
                     "system": system_info(),
                 })

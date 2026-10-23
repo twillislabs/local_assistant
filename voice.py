@@ -35,6 +35,7 @@ DEFAULTS = {
     "mic_gain": None,
     "wake_enabled": True,
     "wake_phrase": "hey computer",
+    "wake_sensitivity": "balanced",  # strict | balanced | loose: how sure it must be that it heard the wake phrase
     "recognition": "fast",  # fast = your words only; open = any words, ~10x slower
     "extra_words": "",
     "listen_seconds": 8,
@@ -262,6 +263,27 @@ COMMAND_WORDS = (
     "start clean vacuum go home dock"
 ).split()
 
+# Everyday words, and near-sounds of common wake words. The wake recogniser can match other speech to these,
+# instead of being forced to choose between the wake phrase and nothing (which made "hey pal" trigger "hey hal").
+WAKE_COMMON = (
+    "a about after again all also always am an and any are around as ask at away back bad be because been before "
+    "being best better big bit both but by call came can come could day did do does doing done don't down each "
+    "even ever every find first for from get give go going good got great had has have he hear her here him his "
+    "home how i if in into is it it's just keep know last let like little long look made make man many may me "
+    "more most much my need never new next no not now of off oh okay old on one only or other our out over own "
+    "people put really right said same say see she should show so some something still such sure take tell than "
+    "thank thanks that that's the their them then there these they thing think this those though three through "
+    "time to today too two up us use very want was way we well went were what when where which while who why "
+    "will with work would yeah yes yet you your"
+).split()
+WAKE_NEAR = (
+    "hay hi high hello help held hell hall hold half hail howl pal paul al owl call cal sal val hon honey hum ha "
+    "huh hmm uh um pay play bay hate eight ape computer commuter compute service nervous assistant system listen "
+    "alexa google siri"
+).split()
+# sensitivity -> (also match near-sounds, minimum confidence of each wake word)
+WAKE_SENSITIVITY = {"strict": (True, 0.9), "balanced": (True, 0.6), "loose": (False, 0.5)}
+
 TOOL_VERBS = {
     "HassTurnOn": "turned on", "HassTurnOff": "turned off", "HassLightSet": "adjusted",
     "HassSetPosition": "moved", "HassMediaPause": "paused", "HassMediaUnpause": "resumed",
@@ -477,7 +499,12 @@ class Voice:
     def recognizer(self, mode):
         import vosk
         if mode == "wake":
-            return vosk.KaldiRecognizer(self.stt_model(), RATE, json.dumps([self.cfg()["wake_phrase"].lower(), "[unk]"]))
+            phrase = self.cfg()["wake_phrase"].lower()
+            near, _ = WAKE_SENSITIVITY.get(self.cfg().get("wake_sensitivity"), WAKE_SENSITIVITY["balanced"])
+            words = list(dict.fromkeys(phrase.split() + WAKE_COMMON + (WAKE_NEAR if near else [])))
+            r = vosk.KaldiRecognizer(self.stt_model(), RATE, json.dumps([phrase] + words + ["[unk]"]))
+            r.SetWords(True)  # per-word confidence, checked in _wake_heard
+            return r
         if mode == "open" or self.cfg()["recognition"] == "open":
             return vosk.KaldiRecognizer(self.stt_model(), RATE)
         return vosk.KaldiRecognizer(self.stt_model(), RATE, json.dumps(self.vocabulary() + ["[unk]"]))
@@ -630,16 +657,33 @@ class Voice:
                 if wake is None or wake_version != self.version:
                     wake, wake_version = self.recognizer("wake"), self.version
                 done = wake.AcceptWaveform(data)
-                heard = json.loads(wake.Result() if done else wake.PartialResult())
-                text = heard.get("text") or heard.get("partial") or ""
-                if c["wake_phrase"].lower() in text:
-                    wake = None
+                if not done and c["wake_phrase"].lower() not in json.loads(wake.PartialResult()).get("partial", ""):
+                    continue
+                # Finished utterance, or the phrase showed up in a partial guess: finalise it to get word
+                # confidences, and only wake if every word of the phrase was heard clearly enough.
+                heard = json.loads(wake.Result() if done else wake.FinalResult())
+                wake = None  # start fresh after each utterance
+                if self._wake_heard(heard, c):
                     self._converse("wake phrase")
-                elif done:
-                    wake = None  # start fresh after each utterance
             except Exception as e:
                 self.error = f"wake: {e}"
                 time.sleep(1)
+
+    def _wake_heard(self, heard, c):
+        phrase = c["wake_phrase"].lower().split()
+        words = heard.get("result") or []
+        _, need = WAKE_SENSITIVITY.get(c.get("wake_sensitivity"), WAKE_SENSITIVITY["balanced"])
+        best = 0.0
+        for i in range(len(words) - len(phrase) + 1):
+            seg = words[i:i + len(phrase)]
+            if [w["word"] for w in seg] == phrase:
+                best = max(best, min(w.get("conf", 1.0) for w in seg))
+        if best:
+            self.last_wake = {"at": time.time(), "heard": heard.get("text", ""), "confidence": round(best, 2),
+                              "woke": best >= need}
+            print(f"wake phrase heard in {heard.get('text', '')!r} with confidence {best:.2f}"
+                  f" ({'woke' if best >= need else 'ignored'})", flush=True)
+        return best >= need
 
     def _converse(self, source):
         c = self.cfg()

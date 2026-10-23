@@ -156,7 +156,13 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
         <div><label>Wake phrase</label><input type="text" id="v-wake" placeholder="hey computer"></div>
         <div><label>Max listening time (seconds)</label><input type="number" id="v-listen-s" min="3" max="20"></div>
       </div>
-      <p class="hint">Use common English words; two or three syllables or more avoids false triggers ("hey computer", "okay house", "hey hal").</p>
+      <label>Wake phrase accuracy</label>
+      <select id="v-wake-sens">
+        <option value="strict">Strict: fewest false wakes, say it clearly</option>
+        <option value="balanced">Balanced</option>
+        <option value="loose">Loose: wakes more easily, more false wakes</option>
+      </select>
+      <p class="hint">Use common English words; two or three syllables or more avoids false triggers ("hey computer", "okay house", "hey hal"). <span id="v-wake-last"></span></p>
       <label class="check"><input type="checkbox" id="v-chime"> Chime when it starts listening</label>
       <label>Button</label>
       <div class="btns" style="margin-top:0"><span id="v-key" class="chip">none</span><button class="b" id="v-learn">Learn button…</button><button class="b" id="v-key-clear">Clear</button></div>
@@ -1160,6 +1166,7 @@ const showTemp = rangeLabel("#p-temp", "#p-temp-val", (v) => (+v).toFixed(1));
 function fillVoice() {
   const v = V(), ind = CFG.indicator;
   $("#v-enabled").checked = v.enabled; $("#v-wake-on").checked = v.wake_enabled; $("#v-wake").value = v.wake_phrase;
+  $("#v-wake-sens").value = v.wake_sensitivity || "balanced";
   $("#v-startup-listen").checked = !!v.listen_on_startup; $("#v-startup-sound").value = v.startup_sound || "chime";
   $("#v-listen-s").value = v.listen_seconds; $("#v-chime").checked = v.chime;
   $("#v-key").textContent = v.key ? v.key.label : "none";
@@ -1296,6 +1303,8 @@ function renderVoiceStatus(v) {
   $("#v-status").innerHTML = `${STATE_TEXT[v.state] || v.state}${v.state === "idle" ? ` · ${esc(wake)}` : ""}${v.note ? " · " + esc(v.note) : ""}` +
     (v.error ? `<br><span class="msg bad">${esc(v.error)}</span>` : "") +
     (v.indicator_error ? `<br><span class="msg bad">Indicator: ${esc(v.indicator_error)}</span>` : "");
+  const lw = v.last_wake;
+  $("#v-wake-last").textContent = lw ? `Last heard: "${lw.heard}" (${Math.round(lw.confidence * 100)}% sure, ${lw.woke ? "woke" : "ignored"}).` : "";
   const dl = v.download;
   if (dl.name) $("#v-dl-msg").textContent = `${dl.name}: ${dl.status}`;
   if (dl.status === "done" && $("#v-voices").dataset.dl !== dl.name) { $("#v-voices").dataset.dl = dl.name; loadVoices(); }
@@ -1358,7 +1367,7 @@ $("#v-learn").onclick = () => act($("#v-learn"), $("#v-trig-msg"), async () => {
 });
 $("#v-key-clear").onclick = () => saveVoice($("#v-key-clear"), $("#v-trig-msg"), {key: null}, "Button cleared");
 $("#v-trig-save").onclick = () => saveVoice($("#v-trig-save"), $("#v-trig-msg"), {
-  wake_enabled: $("#v-wake-on").checked, wake_phrase: $("#v-wake").value.trim().toLowerCase(), listen_seconds: +$("#v-listen-s").value,
+  wake_enabled: $("#v-wake-on").checked, wake_phrase: $("#v-wake").value.trim().toLowerCase(), wake_sensitivity: $("#v-wake-sens").value, listen_seconds: +$("#v-listen-s").value,
   chime: $("#v-chime").checked,
   gpio: $("#v-gpio-on").checked ? {chip: $("#v-gpio-chip").value, line: +$("#v-gpio-line").value, edge: $("#v-gpio-edge").value, bias: "pull-up"} : null,
 });

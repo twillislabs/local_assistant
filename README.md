@@ -169,6 +169,10 @@ use it. Header values (API keys) are stored in the config file and shown as dots
 ## Voice and the indicator
 
 - **Triggers**: wake phrase, a learned button, GPIO, `POST /api/voice/listen`, `./listen.sh`, or Home Assistant.
+- **Wake phrase accuracy**: Strict, Balanced (default) or Loose on the Voice page. The recogniser also listens for
+  everyday words and look-alikes ("hey pal", "hey all"), so other speech isn't mistaken for the wake phrase, and it
+  only wakes when every word of the phrase is heard confidently. The page shows what it last heard and how sure it
+  was. If it misses you, try Loose; if it still wakes by mistake, try Strict or a longer phrase.
 - **Toggle listening**: header switch, a second learned button, `POST /api/voice/toggle`, or `./toggle.sh [on|off]`.
 - **Starting up**: on the Voice page, choose whether it starts listening when it starts, and what it does once it's
   ready: a chime, the personality's ready greeting ("Good evening, Dave. I am fully operational."), or nothing.
