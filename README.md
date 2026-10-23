@@ -173,7 +173,12 @@ use it. Header values (API keys) are stored in the config file and shown as dots
   everyday words and look-alikes ("hey pal", "hey all"), so other speech isn't mistaken for the wake phrase, and it
   only wakes when every word of the phrase is heard confidently. The page shows what it last heard and how sure it
   was. If it misses you, try Loose; if it still wakes by mistake, try Strict or a longer phrase.
-- **Toggle listening**: header switch, a second learned button, `POST /api/voice/toggle`, or `./toggle.sh [on|off]`.
+- **Toggle listening**: the switch in the page header, a second learned button, a physical on/off switch, `POST /api/voice/toggle`, or `./toggle.sh [on|off]`.
+- **On/off switch**: wire a toggle or slide switch between a header pin (UNO Q, e.g. D2) or a GPIO line
+  (Raspberry Pi and others) and GND, and pick it under "On/off switch for listening" on the Voice page. No resistor
+  is needed; the pin's pull-up is used. Flipping it switches listening on or off (closed = on by default), and it
+  takes over from "Start listening when the assistant starts". On the UNO Q the switch is read by the same
+  microcontroller sketch as the LED, which is re-flashed automatically when it changes.
 - **Starting up**: on the Voice page, choose whether it starts listening when it starts, and what it does once it's
   ready: a chime, the personality's ready greeting ("Good evening, Dave. I am fully operational."), or nothing.
   "Ready" waits for every tool and the model's warm-up, so the first request after the sound is fast. On an
@@ -237,7 +242,7 @@ rest_command:
 | `profiles.py` | Export and import settings profiles (`profile.sh`) |
 | `profiles/` | Committed settings profiles |
 | `index.html` | The web page |
-| `mcu/agent_led/` | UNO Q microcontroller sketch for the header-pin LED |
+| `mcu/agent_led/` | UNO Q microcontroller sketch for the header-pin LED and listening switch |
 
 Speed comes from keeping each model's prompt identical between requests, so Ollama reuses its cache and
 only your words are processed each time. Adding or changing tools rebuilds that prompt once (about a minute

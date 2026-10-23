@@ -53,6 +53,10 @@ DEFAULTS = {
     "key": None,  # {"device": "<input device name>", "code": 115, "label": "..."}
     "toggle_key": None,  # same shape; switches listening on/off
     "gpio": None,  # {"chip": "gpiochip1", "line": 17, "edge": "falling", "bias": "pull-up"}
+    # On/off switch whose position switches listening on and off, wired from the pin to GND:
+    # {"type": "mcu", "pin": 2, "on_when": "closed"} (UNO Q header pin) or
+    # {"type": "gpio", "chip": "gpiochip0", "line": 17, "on_when": "closed"} (Linux GPIO, e.g. Raspberry Pi)
+    "switch": None,
 }
 
 INDICATOR_DEFAULTS = {
@@ -225,17 +229,7 @@ class Indicator:
             # Gamma so "15%" looks dim to the eye rather than nearly full; fade like HAL's eye.
             duty = round(255 * (look["brightness"] / 100) ** 2.2) if rgb else 0
             args = (int(ind["mcu"]["pin"]), max(duty, 1) if rgb else 0, 250)
-            try:
-                bridge.call("agent_led", *args)
-            except bridge.BridgeError as e:
-                # After power-up the sketch isn't registered; re-flash it (rate-limited).
-                if "not available" not in str(e) or time.time() - getattr(self, "_flashed_at", 0) < 600:
-                    raise
-                self._flashed_at = time.time()
-                print("indicator: agent_led sketch not registered; re-flashing the microcontroller", flush=True)
-                bridge.flash_sketch()
-                time.sleep(4)  # sketch waits 2 s before its handshake
-                bridge.call("agent_led", *args)
+            bridge.call_sketch("agent_led", *args)  # re-flashes the sketch if it isn't registered after power-up
         elif kind == "gpio":
             g = ind["gpio"]
             on = bool(rgb) != bool(g.get("active_low"))
@@ -470,7 +464,7 @@ class Voice:
                 except Exception:
                     pass
         threading.Thread(target=self._load_tts, daemon=True).start()
-        for fn in (self._mic_loop, self._main_loop, self._key_loop, self._gpio_loop):
+        for fn in (self._mic_loop, self._main_loop, self._key_loop, self._gpio_loop, self._switch_loop):
             threading.Thread(target=fn, daemon=True).start()
 
     # ---- models ----
@@ -602,7 +596,7 @@ class Voice:
     def announce_ready(self):
         """After starting up: switch listening on if wanted, then let people know it's ready."""
         c = self.cfg()
-        if c.get("listen_on_startup") and not c["enabled"]:
+        if c.get("listen_on_startup") and not c["enabled"] and not self._switch_cfg():  # a switch decides itself
             self.set_enabled(True, quiet=True)
         self.play_ready(c.get("startup_sound", "chime"))
 
@@ -1012,6 +1006,51 @@ class Voice:
             finally:
                 proc.kill()
             time.sleep(5)
+
+    def _switch_cfg(self):
+        s = self.cfg().get("switch")
+        return s if s and s.get("type") in ("mcu", "gpio") else None
+
+    def read_switch(self, s):
+        """True when the switch is closed (pin connected to GND; the pin has a pull-up)."""
+        if s["type"] == "mcu":
+            import bridge
+            return bridge.call_sketch("agent_switch", int(s["pin"])) == 0
+        p = subprocess.run(["gpioget", "-c", s["chip"], "-b", "pull-up", "--numeric", str(s["line"])],
+                           capture_output=True, text=True, timeout=5)
+        if p.returncode:
+            raise RuntimeError(p.stderr.strip()[:200] or "gpioget failed")
+        return p.stdout.strip() == "0"
+
+    def _switch_loop(self):
+        """Follow an on/off switch: its position switches listening on or off whenever it changes."""
+        self.switch_state, self.switch_error = None, ""
+        seen, applied, last, stable = None, None, None, 0
+        while True:
+            s = self._switch_cfg()
+            if s != seen:  # new or changed switch: apply its position again
+                seen, applied, last, stable = s, None, None, 0
+                self.switch_state, self.switch_error = None, ""
+            if not s:
+                time.sleep(1)
+                continue
+            try:
+                closed = self.read_switch(s)
+                self.switch_error = ""
+            except Exception as e:
+                self.switch_error = str(e)[:200]
+                time.sleep(5)
+                continue
+            stable = stable + 1 if closed == last else 1
+            last = closed
+            if stable == 2 and closed != applied:  # the same reading twice in a row, so contact bounce is ignored
+                first, applied = applied is None, closed
+                self.switch_state = "closed" if closed else "open"
+                on = closed == (s.get("on_when", "closed") == "closed")
+                if on != self.cfg()["enabled"]:
+                    print(f"switch {self.switch_state}: listening {'on' if on else 'off'}", flush=True)
+                    self.set_enabled(on, quiet=first)  # no chime for the position it was already in at start
+            time.sleep(0.15)
 
     # ---- voices ----
 

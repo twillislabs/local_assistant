@@ -18,7 +18,7 @@ A local voice assistant: a Python web server (`web.py`) that routes requests to 
 | `bridge.py` | UNO Q Bridge (arduino-router msgpack-RPC) client and sketch flashing |
 | `profiles.py`, `profile.sh`, `profiles/` | Settings profiles: export/import settings to replicate an assistant |
 | `index.html` | The whole UI: one file, vanilla JS, no build step |
-| `mcu/agent_led/` | UNO Q microcontroller sketch for the header-pin LED |
+| `mcu/agent_led/` | UNO Q microcontroller sketch: `agent_led` (LED) and `agent_switch` (listening switch) |
 | `install.sh`, `setup-root.sh` | User install (venv, models, services) and optional one-time root setup |
 
 Runtime state that is not in the repo: `venv/`, `models/` (both made by `install.sh`), and settings in `~/.config/assistant/config.json`.
@@ -72,7 +72,8 @@ A fresh-clone test: clone to `/tmp`, symlink `venv` and `models` from `~/assista
 ## UNO Q specifics
 
 - Header pins belong to the microcontroller. The LED sketch is flashed with `remoteocd` and called over `/var/run/arduino-router.sock` (group `arduino-router`).
-- After a cold boot the sketch's Bridge handshake is lost and a reset doesn't recover it; only re-flashing does (`bridge.flash_sketch`, triggered automatically by the indicator).
+- After a cold boot the sketch's Bridge handshake is lost and a reset doesn't recover it; only re-flashing does (`bridge.flash_sketch`). `bridge.call_sketch` does it automatically (rate-limited) when a function isn't registered, which also
+  covers an older sketch missing a newer function; `flash_sketch` rebuilds when `agent_led.ino` is newer than the build.
 - Don't read GPIO lines 37/38/70 on `gpiochip1` with `gpioget`: it reconfigures the router's control lines.
 
 ## Git

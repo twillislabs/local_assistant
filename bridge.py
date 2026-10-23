@@ -8,12 +8,16 @@ import itertools
 import os
 import socket
 import subprocess
+import threading
+import time
 
 import msgpack
 
 SOCKET = "/var/run/arduino-router.sock"
 SKETCH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mcu", "agent_led")
 _ids = itertools.count(1)
+_flash_lock = threading.Lock()
+_flashed_at = 0.0
 
 
 def flash_sketch():
@@ -28,7 +32,8 @@ def flash_sketch():
     remoteocd = sorted(glob.glob(f"{home}/tools/remoteocd/*/remoteocd"))[-1]
     variant = sorted(glob.glob(f"{home}/hardware/zephyr/*/variants/arduino_uno_q_stm32u585xx"))[-1]
     binary = os.path.join(SKETCH, "build", "agent_led.ino.elf-zsk.bin")
-    if not os.path.exists(binary):
+    source = os.path.join(SKETCH, "agent_led.ino")
+    if not os.path.exists(binary) or os.path.getmtime(source) > os.path.getmtime(binary):
         subprocess.run(["arduino-cli", "compile", "--profile", "default", "--fqbn", "arduino:zephyr:unoq",
                         "--output-dir", "build", "."], cwd=SKETCH, check=True, capture_output=True, timeout=600)
     subprocess.run([remoteocd, "upload", "-f", f"{variant}/flash_sketch.cfg", binary],
@@ -64,3 +69,28 @@ def call(method, *params, timeout=3.0):
         raise BridgeError("Bridge (arduino-router) isn't running")
     except socket.timeout:
         raise BridgeError(f"no reply from the microcontroller for {method}; is the agent_led sketch flashed?")
+
+
+def call_sketch(method, *params):
+    """Call one of the agent_led sketch's functions, re-flashing the sketch if it isn't registered.
+
+    After power-up the sketch often isn't registered (see flash_sketch), and an older sketch may lack a
+    newer function. Re-flashing fixes both; it's rate-limited to once every 10 minutes.
+    """
+    global _flashed_at
+    try:
+        return call(method, *params)
+    except BridgeError as e:
+        if "not available" not in str(e):
+            raise
+        with _flash_lock:
+            try:  # another caller may have re-flashed while we waited
+                return call(method, *params)
+            except BridgeError:
+                if time.time() - _flashed_at < 600:
+                    raise
+            _flashed_at = time.time()
+            print(f"bridge: {method} isn't registered; re-flashing the microcontroller", flush=True)
+            flash_sketch()
+            time.sleep(4)  # the sketch waits 2 s before its handshake
+        return call(method, *params)

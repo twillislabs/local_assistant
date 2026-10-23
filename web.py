@@ -238,6 +238,7 @@ class Handler(BaseHTTPRequestHandler):
                     "pull": pull_state,
                     "voice": {"state": voice.state, "error": voice.error, "level": round(voice.level, 3),
                               "download": voice.download, "note": getattr(voice, "state_note", ""), "last_wake": getattr(voice, "last_wake", None),
+                              "switch": getattr(voice, "switch_state", None), "switch_error": getattr(voice, "switch_error", ""),
                               "indicator_error": voice.indicator.error},
                     "system": system_info(),
                 })

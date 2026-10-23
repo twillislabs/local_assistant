@@ -175,6 +175,21 @@ input[type=color] { width: 44px; height: 30px; border: 1px solid var(--border); 
         <div><label>Line</label><input type="number" id="v-gpio-line" min="0"></div>
         <div><label>Trigger on</label><select id="v-gpio-edge"><option value="falling">press to ground (falling)</option><option value="rising">rising</option></select></div>
       </div>
+      <label>On/off switch for listening</label>
+      <select id="v-sw-type">
+        <option value="">None</option>
+        <option value="mcu" data-needs="bridge">Switch on a header pin (UNO Q, D2–D13)</option>
+        <option value="gpio" data-needs="gpio">Switch on a GPIO line</option>
+      </select>
+      <div class="row" id="v-sw-mcu"><div><label>Pin</label><select id="v-sw-pin"></select></div></div>
+      <div class="row" id="v-sw-gpio">
+        <div><label>Chip</label><input type="text" id="v-sw-chip" placeholder="gpiochip0"></div>
+        <div><label>Line</label><input type="number" id="v-sw-line" min="0"></div>
+      </div>
+      <div class="row" id="v-sw-onrow"><div><label>Listening is on when the switch is</label>
+        <select id="v-sw-on"><option value="closed">closed (pin connected to GND)</option><option value="open">open</option></select></div></div>
+      <p class="hint" id="v-sw-hint">Wire a toggle or slide switch between the pin and GND; no resistor needed. Flipping it switches
+        listening on or off, and the page's switch and buttons still work in between. <span id="v-sw-state"></span></p>
       <div class="btns"><button class="b primary" id="v-trig-save">Save</button><span class="msg" id="v-trig-msg"></span></div>
       <label>From a script, Home Assistant, or another device</label>
       <pre id="v-snippets"></pre>
@@ -1171,6 +1186,9 @@ function fillVoice() {
   $("#v-listen-s").value = v.listen_seconds; $("#v-chime").checked = v.chime;
   $("#v-key").textContent = v.key ? v.key.label : "none";
   $("#v-tkey").textContent = v.toggle_key ? v.toggle_key.label : "none";
+  const sw = v.switch || {};
+  $("#v-sw-type").value = sw.type || ""; $("#v-sw-pin").value = sw.pin ?? 2; $("#v-sw-chip").value = sw.chip || "gpiochip0";
+  $("#v-sw-line").value = sw.line ?? ""; $("#v-sw-on").value = sw.on_when || "closed"; showSwitchFields();
   $("#v-gpio-on").checked = !!v.gpio; $("#v-gpio-chip").value = v.gpio?.chip || "gpiochip1"; $("#v-gpio-line").value = v.gpio?.line ?? "";
   $("#v-gpio-edge").value = v.gpio?.edge || "falling"; $("#v-gpio").hidden = !v.gpio;
   $("#v-rec").value = v.recognition; $("#v-words").value = v.extra_words;
@@ -1237,7 +1255,7 @@ function headersObj(text) {
 let PLATFORM = null;
 function applyPlatform() {
   if (!PLATFORM) return;
-  document.querySelectorAll("#i-type option[data-needs]").forEach((o) => {
+  document.querySelectorAll("#i-type option[data-needs], #v-sw-type option[data-needs]").forEach((o) => {
     o.hidden = !PLATFORM[o.dataset.needs] || (Array.isArray(PLATFORM[o.dataset.needs]) && !PLATFORM[o.dataset.needs].length);
   });
   document.querySelector('#i-type option[value="board"]').hidden = !PLATFORM.leds.length;
@@ -1247,6 +1265,13 @@ function applyPlatform() {
 $("#i-mcu-pin").innerHTML = [2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((p) => `<option value="${p}">D${p}</option>`).join("");
 $("#i-type").onchange = showIndicatorFields;
 $("#v-gpio-on").onchange = () => { $("#v-gpio").hidden = !$("#v-gpio-on").checked; };
+$("#v-sw-pin").innerHTML = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((p) => `<option value="${p}">D${p}</option>`).join("");
+function showSwitchFields() {
+  const t = $("#v-sw-type").value;
+  $("#v-sw-mcu").hidden = t !== "mcu"; $("#v-sw-gpio").hidden = t !== "gpio";
+  $("#v-sw-onrow").hidden = $("#v-sw-hint").hidden = !t;
+}
+$("#v-sw-type").onchange = showSwitchFields;
 
 async function loadVoice() {
   if (!CFG) return;  // settings not loaded yet; init() reopens the tab afterwards
@@ -1303,6 +1328,8 @@ function renderVoiceStatus(v) {
   $("#v-status").innerHTML = `${STATE_TEXT[v.state] || v.state}${v.state === "idle" ? ` · ${esc(wake)}` : ""}${v.note ? " · " + esc(v.note) : ""}` +
     (v.error ? `<br><span class="msg bad">${esc(v.error)}</span>` : "") +
     (v.indicator_error ? `<br><span class="msg bad">Indicator: ${esc(v.indicator_error)}</span>` : "");
+  $("#v-sw-state").innerHTML = v.switch_error ? `<span class="msg bad">Switch: ${esc(v.switch_error)}</span>`
+    : v.switch ? `Switch is ${v.switch} now.` : "";
   const lw = v.last_wake;
   $("#v-wake-last").textContent = lw ? `Last heard: "${lw.heard}" (${Math.round(lw.confidence * 100)}% sure, ${lw.woke ? "woke" : "ignored"}).` : "";
   const dl = v.download;
@@ -1370,6 +1397,9 @@ $("#v-trig-save").onclick = () => saveVoice($("#v-trig-save"), $("#v-trig-msg"),
   wake_enabled: $("#v-wake-on").checked, wake_phrase: $("#v-wake").value.trim().toLowerCase(), wake_sensitivity: $("#v-wake-sens").value, listen_seconds: +$("#v-listen-s").value,
   chime: $("#v-chime").checked,
   gpio: $("#v-gpio-on").checked ? {chip: $("#v-gpio-chip").value, line: +$("#v-gpio-line").value, edge: $("#v-gpio-edge").value, bias: "pull-up"} : null,
+  switch: !$("#v-sw-type").value ? null : $("#v-sw-type").value === "mcu"
+    ? {type: "mcu", pin: +$("#v-sw-pin").value, on_when: $("#v-sw-on").value}
+    : {type: "gpio", chip: $("#v-sw-chip").value.trim(), line: +$("#v-sw-line").value, on_when: $("#v-sw-on").value},
 });
 $("#v-rec-save").onclick = () => saveVoice($("#v-rec-save"), $("#v-rec-msg"), {recognition: $("#v-rec").value, extra_words: $("#v-words").value});
 // ---- personalities ----
